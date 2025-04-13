@@ -16,26 +16,32 @@ load_dotenv(dotenv_path=env_file)
 @router.post("/register")
 def register(data: RegisterRequest):
     try:
+        # Check if the email is already registered
         cursor.execute("SELECT * FROM users WHERE email = %s", (data.email,))
         existing_user = cursor.fetchone()
         if existing_user:
             raise HTTPException(status_code=409, detail="Email already registered")
 
+        # Hash the user's password
         hashed_pw = bcrypt.hashpw(data.password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
+        # Generate RSA keys
         public_key, private_key = generate_rsa_keys(bits=2048)
         print(f"Generated RSA keys: {public_key}, {private_key}")
-        encrypted_private_key = encrypt_private_key(private_key, data.password)
 
-
+        # Generate an AES key
         aes_key = generate_aes_key()
         print(f"Generated AES key: {aes_key}")
 
+        # Encrypt the private RSA key using the AES key
+        encrypted_private_key = encrypt_private_key(private_key, aes_key)  # Pass aes_key directly
+
+        # Save the encrypted private key and AES key in the environment file
         user_key_prefix = f"USER_{data.email.upper().replace('@', '_').replace('.', '_')}"
-
         set_key(env_file, f"{user_key_prefix}_ENCRYPTED_PRIVATE_KEY", encrypted_private_key)
-        set_key(env_file, f"{user_key_prefix}_AES_KEY", aes_key)
+        set_key(env_file, f"{user_key_prefix}_AES_KEY", aes_key.hex())  # Save AES key as hex string
 
+        # Insert the user into the database
         cursor.execute(
             "INSERT INTO users (email, password, rsa_public_key) VALUES (%s, %s, %s)",
             (data.email, hashed_pw, public_key)
@@ -46,10 +52,9 @@ def register(data: RegisterRequest):
             "message": "User registered successfully",
             "env_keys": {
                 f"{user_key_prefix}_ENCRYPTED_PRIVATE_KEY": encrypted_private_key,
-                f"{user_key_prefix}_AES_KEY": aes_key
+                f"{user_key_prefix}_AES_KEY": aes_key.hex()
             }
         }
-
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
