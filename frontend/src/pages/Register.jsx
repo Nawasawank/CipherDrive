@@ -1,15 +1,15 @@
 import { useState, useEffect } from "react";
-import { login } from "../services/api";
+import { register } from "../services/api";
 import { useNavigate } from "react-router-dom";
-import "../styles/Login.css";
-import ErrorOverlay from "../components/ErrorOverlay.js";
+import "../styles/Register.css";
+import SuccessOverlay from "../components/SuccessOverlay";
 
-export default function Login() {
+export default function Register() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [errorMessage, setErrorMessage] = useState("");
-  const [showError, setShowError] = useState(false);
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -22,24 +22,22 @@ export default function Login() {
     return () => clearTimeout(timer);
   }, []);
 
-  const handleLogin = async (e) => {
+  const handleRegister = async (e) => {
     e.preventDefault();
     setLoading(true);
-    setErrorMessage("");
+    setError("");
     try {
-      const res = await login(email, password);
-      localStorage.setItem("access_token", res.access_token);
-      navigate("/drive");
+      await register(email, password);
+      setShowSuccess(true);
     } catch (err) {
-      setErrorMessage(err.response?.data?.detail || "Login failed");
-      setShowError(true);
+      setError(err.response?.data?.detail || "Registration failed");
     } finally {
       setLoading(false);
     }
   };
 
   const handleOverlayClose = () => {
-    setShowError(false);
+    navigate("/");
   };
 
   return (
@@ -48,10 +46,12 @@ export default function Login() {
         <div className="auth-logo">
           <div className="logo-text">SecureDrive</div>
         </div>
-        <h1 className="auth-title">Sign in</h1>
-        <p className="auth-subtitle">to continue to SecureDrive</p>
+        <h1 className="auth-title">Create your account</h1>
+        <p className="auth-subtitle">to get started with SecureDrive</p>
 
-        <form className="auth-form" onSubmit={handleLogin}>
+        {error && <div className="auth-error">{error}</div>}
+
+        <form className="auth-form" onSubmit={handleRegister}>
           <div className="form-group">
             <input
               type="email"
@@ -75,22 +75,29 @@ export default function Login() {
               onChange={(e) => setPassword(e.target.value)}
               required
               placeholder=" "
-              autoComplete="current-password"
+              autoComplete="new-password"
             />
             <label htmlFor="password" className="auth-label">Password</label>
           </div>
 
           <div className="auth-actions">
-            <a href="/register" className="auth-link">Create account</a>
+            <a href="/" className="auth-link">Already have an account?</a>
             <button type="submit" className="auth-button" disabled={loading}>
-              {loading ? <span className="loading-spinner"></span> : "Sign in"}
+              {loading ? (
+                <span className="loading-spinner"></span>
+              ) : (
+                "Sign up"
+              )}
             </button>
           </div>
         </form>
       </div>
 
-      {showError && (
-        <ErrorOverlay message={errorMessage} onClose={handleOverlayClose} />
+      {showSuccess && (
+        <SuccessOverlay
+          message="Your account has been created successfully!"
+          onClose={handleOverlayClose}
+        />
       )}
     </div>
   );

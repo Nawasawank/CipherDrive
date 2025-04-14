@@ -36,4 +36,11 @@ export const register = async (email, password) => {
     return response.data;
 };
 
+export const getUserDetails = async () => {
+    const response = await api.get("/auth/user-details");
+    console.log(response.data);
+    
+    return response.data;
+};
+
 export default api;
