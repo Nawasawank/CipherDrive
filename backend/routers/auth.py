@@ -1,7 +1,7 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from schemas.auth import RegisterRequest, LoginRequest
 from db import get_db  
-from utils.jwt_handler import create_access_token
+from utils.jwt_handler import create_access_token, verify_token
 from utils.rsa import generate_rsa_keys
 from utils.aes import encrypt_private_key, generate_aes_key
 import bcrypt
@@ -59,11 +59,11 @@ def login(data: LoginRequest):
                 cursor.execute("SELECT id, email, password, role FROM users WHERE email = %s", (data.email,))
                 user = cursor.fetchone()
                 if not user:
-                    raise HTTPException(status_code=404, detail="User not found")
+                    raise HTTPException(status_code=401, detail="Email is incorrect")
 
                 db_id, db_email, db_hashed_password, db_role = user
                 if not bcrypt.checkpw(data.password.encode("utf-8"), db_hashed_password.encode("utf-8")):
-                    raise HTTPException(status_code=401, detail="Incorrect password")
+                    raise HTTPException(status_code=401, detail="Password is incorrect")
 
         token = create_access_token({
             "user_id": db_id,
@@ -74,6 +74,37 @@ def login(data: LoginRequest):
             "message": "Login successful",
             "access_token": token
         }
+
+    except HTTPException:
+        raise  
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Internal server error")
+    
+
+@router.get("/user-details")
+def get_user_details(authorization: str = Header(...)):
+    try:
+        token = authorization.split(" ")[1]
+        decoded_token = verify_token(token)
+
+        if not decoded_token:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+        user_id = decoded_token["user_id"]
+
+        with get_db() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "SELECT email FROM users WHERE id = %s", (user_id,)
+                )
+                user = cursor.fetchone()
+                if not user:
+                    raise HTTPException(status_code=404, detail="User not found")
+
+                return {
+                    "email": user[0]
+                }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
