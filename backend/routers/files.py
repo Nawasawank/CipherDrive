@@ -12,6 +12,7 @@ from utils.aes import decrypt_private_key
 from utils.rsa import encrypt_rsa, decrypt_rsa
 from utils.jwt_handler import verify_token
 from db import get_db
+import concurrent.futures
 
 router = APIRouter()
 load_dotenv()
@@ -93,81 +94,82 @@ async def upload_file(file: UploadFile, authorization: str = Header(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+process_pool = concurrent.futures.ProcessPoolExecutor()
+
 @router.get("/my-files")
 async def get_user_files(authorization: str = Header(...)):
     try:
+        # Verify JWT token
         token = authorization.split(" ")[1]
         decoded_token = verify_token(token)
         if not decoded_token:
             raise HTTPException(status_code=401, detail="Invalid or expired token")
         user_id = decoded_token["user_id"]
 
-        with get_db() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute("""
-                    SELECT u.email, f.file_name, f.file_type, f.file_url, f.encrypted_aes_key
-                    FROM users u
-                    JOIN files f ON u.id = f.owner_id
-                    WHERE u.id = %s
-                """, (user_id,))
-                result = cursor.fetchall()
+        # Fetch files and user's email using an asynchronous DB query (or run blocking call in a thread)
+        # For demonstration, we'll use a thread offload for blocking code.
+        def get_records():
+            with get_db() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        SELECT u.email, f.file_name, f.file_type, f.file_url, f.encrypted_aes_key
+                        FROM users u
+                        JOIN files f ON u.id = f.owner_id
+                        WHERE u.id = %s
+                    """, (user_id,))
+                    return cursor.fetchall()
+        records = await asyncio.to_thread(get_records)
+        
+        if not records:
+            return { "message": "No files found", "files": [] }
+        user_email = records[0][0]
+        files = records
 
-                if not result:
-                    return {
-                        "message": "No files found",
-                        "files": []
-                    }
-
-                user_email = result[0][0]
-                files = result
-
+        # Decrypt user's private key once
         prefix = f"USER_{user_email.upper().replace('@', '_').replace('.', '_')}"
         encrypted_private_key = os.getenv(f"{prefix}_ENCRYPTED_PRIVATE_KEY")
         aes_key_hex = os.getenv(f"{prefix}_AES_KEY")
         if not encrypted_private_key or not aes_key_hex:
             raise HTTPException(status_code=404, detail="Key not found in environment")
+        private_key = await asyncio.to_thread(
+            decrypt_private_key,
+            encrypted_private_key,
+            bytes.fromhex(aes_key_hex)
+        )
 
-        private_key = await asyncio.to_thread(decrypt_private_key, encrypted_private_key, bytes.fromhex(aes_key_hex))
+        semaphore = asyncio.Semaphore(20)
 
-        semaphore = asyncio.Semaphore(10)
-
-        async def process_file(file, client):
-            file_name, file_type, file_url, encrypted_aes_key = file[1:]
+        async def decrypt_file(file_data, client):
+            _, file_name, file_type, file_url, encrypted_aes_key = file_data
             async with semaphore:
-                try:
-                    aes_key_hex = (await asyncio.to_thread(decrypt_rsa, private_key, int(encrypted_aes_key))).strip()
-                    aes_key = bytes.fromhex(aes_key_hex)
+                # Offload RSA decryption to a process pool to bypass GIL
+                decrypted_aes_key_hex = (await asyncio.get_running_loop().run_in_executor(
+                    process_pool, decrypt_rsa, private_key, int(encrypted_aes_key)
+                )).strip()
+                aes_key = bytes.fromhex(decrypted_aes_key_hex)
 
-                    response = await client.get(file_url)
-                    response.raise_for_status()
+                response = await client.get(file_url)
+                response.raise_for_status()
+                content = response.content
 
-                    content = response.content
-                    nonce, tag, ciphertext = content[:16], content[16:32], content[32:]
-
-                    cipher = AES.new(aes_key, AES.MODE_EAX, nonce=nonce)
-                    decrypted = cipher.decrypt_and_verify(ciphertext, tag)
-
-                    decoded = (
-                        decrypted.decode("utf-8", errors="ignore")
-                        if file_type.startswith("text/")
-                        else base64.b64encode(decrypted).decode("utf-8")
-                    )
-
-                    return {
-                        "file_name": file_name,
-                        "file_type": file_type,
-                        "decrypted_content": decoded
-                    }
-
-                except Exception as e:
-                    return {
-                        "file_name": file_name,
-                        "file_type": file_type,
-                        "error": f"Error decrypting: {str(e)}"
-                    }
+                nonce, tag, ciphertext = content[:16], content[16:32], content[32:]
+                # Offload AES decryption in a thread if necessary
+                decrypted = await asyncio.to_thread(
+                    lambda: AES.new(aes_key, AES.MODE_EAX, nonce).decrypt_and_verify(ciphertext, tag)
+                )
+                decoded_content = (
+                    decrypted.decode("utf-8", errors="ignore")
+                    if file_type.startswith("text/")
+                    else base64.b64encode(decrypted).decode("utf-8")
+                )
+                return {
+                    "file_name": file_name,
+                    "file_type": file_type,
+                    "decrypted_content": decoded_content
+                }
 
         async with httpx.AsyncClient(timeout=10.0) as client:
-            tasks = [process_file(f, client) for f in files]
+            tasks = [decrypt_file(f, client) for f in files]
             decrypted_files = await asyncio.gather(*tasks)
 
         return {
@@ -177,6 +179,8 @@ async def get_user_files(authorization: str = Header(...)):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
 
 
 @router.get("/admin/all-files")
