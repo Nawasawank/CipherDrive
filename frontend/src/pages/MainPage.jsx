@@ -169,7 +169,7 @@ export default function MainPage() {
 
         <div className="file-grid">
           {loading ? (
-            [...Array(6)].map((_, i) => (
+            [...Array(5)].map((_, i) => (
               <div className="file-tile skeleton" key={i}>
                 <div className="file-thumbnail skeleton-box"></div>
                 <div className="file-name skeleton-text"></div>
