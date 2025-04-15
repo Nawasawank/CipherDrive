@@ -57,5 +57,35 @@ export const shareFile = async (file_name, shared_with_email, permission) => {
     return res.data;
   };
 
+  export const getFileMetadata = async () => {
+    const res = await api.get("/my-files/metadata",);
+    return res.data;
+  };
   
+  export const previewFile = async (fileName) => {
+    const res = await axios.get("/my-files/preview", {file_name: fileName },
+  );
+    return res.data;
+  };
+
+  export const getAllUsers = async () => {
+    const res = await api.get("/admin/users");
+    return res.data;
+  };
+
+  export const getUserFilesById = async (userId) => {
+    const res = await api.get("/admin/user-files", {
+      params: { user_id: userId },
+    });
+    return res.data;
+  };
+
+  export const deleteFile = async (file_name) => {
+    const res = await api.delete("/files/delete-file", {
+        params: { file_name },
+    });
+    return res.data;
+};
+  
+
 export default api;

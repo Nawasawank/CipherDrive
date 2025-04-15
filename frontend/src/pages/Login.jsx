@@ -29,6 +29,7 @@ export default function Login() {
     try {
       const res = await login(email, password);
       localStorage.setItem("access_token", res.access_token);
+      localStorage.setItem("userRole", res.role); 
       navigate("/drive");
     } catch (err) {
       setErrorMessage(err.response?.data?.detail || "Login failed");

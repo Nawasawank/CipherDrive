@@ -284,3 +284,38 @@ async def admin_get_all_user_files(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/delete-file")
+async def delete_file(file_name: str, authorization: str = Header(...)):
+    try:
+        token = authorization.split(" ")[1]
+        decoded_token = verify_token(token)
+        if not decoded_token:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+        user_id = decoded_token["user_id"]
+
+        with get_db() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT file_url FROM files WHERE file_name = %s AND owner_id = %s
+                """, (file_name, user_id))
+                row = cursor.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="File not found")
+
+                file_url = row[0]
+                path_start = file_url.find("/file/") + len("/file/")
+                file_path = file_url[path_start:]
+
+                supabase.storage.from_("file").remove([file_path])
+
+                cursor.execute("DELETE FROM files WHERE file_name = %s AND owner_id = %s", (file_name, user_id))
+                conn.commit()
+
+        return {"message": f"'{file_name}' deleted successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

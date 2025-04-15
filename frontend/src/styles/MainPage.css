@@ -85,7 +85,7 @@
   padding: 6px 12px;
   border-radius: 6px;
   background-color: white;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   user-select: none;
 }
 
@@ -101,7 +101,7 @@
   border: 1px solid #e0e0e0;
   border-radius: 4px;
   padding: 8px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
   z-index: 10;
 }
 
@@ -123,14 +123,14 @@
 .file-tile {
   background-color: white;
   border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
   padding: 12px;
   text-align: center;
   transition: box-shadow 0.2s ease, transform 0.2s;
 }
 
 .file-tile:hover {
-  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
   transform: translateY(-2px);
 }
 
@@ -152,9 +152,19 @@
   object-fit: contain;
 }
 
+.file-thumbnail a {
+  max-height: 100%;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+/* แก้ตรงนี้ไป */
 .file-icon {
-  width: 48px;
-  height: 48px;
+  width: 100% !important;
+  /* เพิ่มจาก 48px */
+  height: 100% !important;
+  /* เพิ่มจาก 48px */
+  object-fit: contain !important;
 }
 
 /* File name */
@@ -190,21 +200,45 @@
 }
 
 /* Overlay Styles */
-.preview-overlay,
+
+.preview-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 40px;
+}
+
 .share-overlay {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: rgba(0,0,0,0.6);
+  background-color: rgba(0, 0, 0, 0.6);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1000;
 }
 
-.preview-content,
+.preview-content {
+  position: relative;
+  max-width: 90vw;
+  max-height: 90vh;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .share-content {
   background: white;
   padding: 20px;
@@ -292,31 +326,64 @@
     opacity: 0;
     transform: scale(0.95);
   }
+
   to {
     opacity: 1;
     transform: scale(1);
   }
 }
+
 .pdf-fullscreen {
-  width: 100vw;
-  height: 95vh;
+  width: 100%;
+  height: 100%;
   border: none;
-  background-color: #fff;
-  object-fit: contain;
-  box-shadow: 0 0 15px rgba(0, 0, 0, 0.25);
   border-radius: 8px;
-}
-/* Skeleton Loading */
-.skeleton {
-  animation: pulse 1.5s infinite;
+  background: white;
 }
 
+.close-preview {
+  position: absolute;
+  top: -40px;
+  right: -40px;
+  background: none;
+  color: white;
+  border: none;
+  width: 40px;
+  height: 40px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  z-index: 1001;
+}
+
+.logout-button {
+  background-color: #ec4547;
+  color: white;
+  border: none;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.logout-button:hover {
+  background-color: #cb3c44;
+}
+
+/* Skeleton base styles */
+.skeleton {
+  animation: pulse 1.5s infinite ease-in-out;
+}
+
+/* Skeleton file box */
 .skeleton-box {
   height: 120px;
   background: #e0e0e0;
   border-radius: 6px;
 }
 
+/* Skeleton text bar */
 .skeleton-text {
   height: 14px;
   background: #e0e0e0;
@@ -324,6 +391,7 @@
   border-radius: 4px;
 }
 
+/* Skeleton buttons */
 .skeleton-button {
   width: 60px;
   height: 24px;
@@ -331,6 +399,7 @@
   border-radius: 4px;
 }
 
+/* Pulse animation */
 @keyframes pulse {
   0% {
     background-color: #e0e0e0;
@@ -343,4 +412,75 @@
   }
 }
 
+.uploading-overlay {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 1000;
+  pointer-events: none;
+}
+
+.uploading-box {
+  background: white;
+  padding: 12px 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  pointer-events: auto;
+}
+
+.spinner {
+  border: 3px solid #f3f3f3;
+  border-top: 3px solid #1a73e8;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.close-preview-button {
+  position: absolute;
+  top: 10px;
+  right: 15px;
+  background: transparent;
+  color: white;
+  border: none;
+  font-size: 1.5rem;
+  padding: 5px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  z-index: 10;
+}
+
+.close-preview-button:hover {
+  background: rgba(0, 0, 0, 0.8);
+}
+.owner-info {
+  font-size: 0.75rem;
+  color: #6b7280; 
+  margin-top: 4px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.owner-info .label {
+  font-weight: 500;
+  font-size: 0.7rem;
+  color: #9ca3af;
+}
+
+.owner-info .email {
+  font-weight: 600;
+  color: #9ca3af; 
+  word-break: break-all;
+}
 
