@@ -43,4 +43,19 @@ export const getUserDetails = async () => {
     return response.data;
 };
 
+export const shareFile = async (file_name, shared_with_email, permission) => {
+    const res = await api.post("/share/share-file", {
+      file_name,
+      shared_with_email,
+      permission,
+    });
+    return res.data;
+  };
+
+  export const getSharedFiles = async () => {
+    const res = await api.get("/share/shared-files");
+    return res.data;
+  };
+
+  
 export default api;
