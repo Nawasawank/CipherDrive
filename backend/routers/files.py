@@ -16,12 +16,7 @@ from db import get_db
 router = APIRouter()
 load_dotenv()
 
-
-def generate_unique_filename(base_name: str, user_id: str) -> str:
-    with get_db() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("SELECT file_name FROM files WHERE owner_id = %s", (user_id,))
-            existing_names = {row[0] for row in cursor.fetchall()}
+def generate_unique_filename(base_name: str, user_id: str, existing_names: set) -> str:
     if base_name not in existing_names:
         return base_name
     name, ext = os.path.splitext(base_name)
@@ -43,38 +38,55 @@ async def upload_file(file: UploadFile, authorization: str = Header(...)):
         with get_db() as conn:
             with conn.cursor() as cursor:
                 cursor.execute("SELECT rsa_public_key FROM users WHERE id = %s", (user_id,))
-                result = cursor.fetchone()
-                if not result:
+                row = cursor.fetchone()
+                if not row:
                     raise HTTPException(status_code=404, detail="User not found")
-                public_key = result[0]
+                public_key = row[0]
 
-        file_name = generate_unique_filename(file.filename, user_id)
-        aes_key = get_random_bytes(32)
+                cursor.execute("SELECT file_name FROM files WHERE owner_id = %s", (user_id,))
+                existing_names = {r[0] for r in cursor.fetchall()}
+
+        file_name = generate_unique_filename(file.filename, user_id, existing_names)
+        file_path = f"user_{user_id}/{file_name}"
+
         file_content = await file.read()
+        aes_key = get_random_bytes(32)
         cipher = AES.new(aes_key, AES.MODE_EAX)
         nonce = cipher.nonce
         ciphertext, tag = cipher.encrypt_and_digest(file_content)
         full_data = nonce + tag + ciphertext
 
-        encrypted_aes_key = encrypt_rsa(public_key, aes_key.hex())
+        encrypted_aes_key = await asyncio.to_thread(encrypt_rsa, public_key, aes_key.hex())
 
         bucket = "file"
-        supabase.storage.from_(bucket).upload(file_name, full_data)
-        file_url = supabase.storage.from_(bucket).get_public_url(file_name)
+        await asyncio.to_thread(supabase.storage.from_(bucket).upload, file_path, full_data)
+        file_url = supabase.storage.from_(bucket).get_public_url(file_path)
 
-        supabase.table("files").insert({
-            "owner_id": user_id,
-            "file_name": file_name,
-            "file_type": file.content_type,
-            "file_url": file_url,
-            "encrypted_aes_key": str(encrypted_aes_key)
-        }).execute()
+        await asyncio.to_thread(
+            lambda: supabase.table("files").insert({
+                "owner_id": user_id,
+                "file_name": file_name,
+                "file_type": file.content_type,
+                "file_url": file_url,
+                "encrypted_aes_key": str(encrypted_aes_key)
+            }).execute()
+        )
+
+        cipher = AES.new(aes_key, AES.MODE_EAX, nonce=nonce)
+        decrypted = cipher.decrypt_and_verify(ciphertext, tag)
+
+        decoded_content = (
+            decrypted.decode("utf-8", errors="ignore")
+            if file.content_type.startswith("text/")
+            else base64.b64encode(decrypted).decode("utf-8")
+        )
 
         return {
-            "message": "File uploaded successfully",
-            "file_url": file_url,
-            "encrypted_aes_key": str(encrypted_aes_key),
-            "final_file_name": file_name
+            "file": {
+                "file_name": file_name,
+                "file_type": file.content_type,
+                "decrypted_content": decoded_content
+            }
         }
 
     except Exception as e:
@@ -92,43 +104,45 @@ async def get_user_files(authorization: str = Header(...)):
 
         with get_db() as conn:
             with conn.cursor() as cursor:
-                cursor.execute("SELECT email FROM users WHERE id = %s", (user_id,))
-                user = cursor.fetchone()
-                if not user:
-                    raise HTTPException(status_code=404, detail="User not found")
-                user_email = user[0]
+                cursor.execute("""
+                    SELECT u.email, f.file_name, f.file_type, f.file_url, f.encrypted_aes_key
+                    FROM users u
+                    JOIN files f ON u.id = f.owner_id
+                    WHERE u.id = %s
+                """, (user_id,))
+                result = cursor.fetchall()
 
-                prefix = f"USER_{user_email.upper().replace('@', '_').replace('.', '_')}"
-                encrypted_private_key = os.getenv(f"{prefix}_ENCRYPTED_PRIVATE_KEY")
-                aes_key_hex = os.getenv(f"{prefix}_AES_KEY")
-                if not encrypted_private_key or not aes_key_hex:
-                    raise HTTPException(status_code=404, detail="Key not found in environment")
+                if not result:
+                    return {
+                        "message": "No files found",
+                        "files": []
+                    }
 
-                private_key = decrypt_private_key(encrypted_private_key, bytes.fromhex(aes_key_hex))
+                user_email = result[0][0]
+                files = result
 
-                cursor.execute(
-                    "SELECT file_name, file_type, file_url, encrypted_aes_key FROM files WHERE owner_id = %s",
-                    (user_id,)
-                )
-                files = cursor.fetchall()
+        prefix = f"USER_{user_email.upper().replace('@', '_').replace('.', '_')}"
+        encrypted_private_key = os.getenv(f"{prefix}_ENCRYPTED_PRIVATE_KEY")
+        aes_key_hex = os.getenv(f"{prefix}_AES_KEY")
+        if not encrypted_private_key or not aes_key_hex:
+            raise HTTPException(status_code=404, detail="Key not found in environment")
+
+        private_key = await asyncio.to_thread(decrypt_private_key, encrypted_private_key, bytes.fromhex(aes_key_hex))
 
         semaphore = asyncio.Semaphore(10)
 
         async def process_file(file, client):
-            file_name, file_type, file_url, encrypted_aes_key = file
+            file_name, file_type, file_url, encrypted_aes_key = file[1:]
             async with semaphore:
                 try:
                     aes_key_hex = (await asyncio.to_thread(decrypt_rsa, private_key, int(encrypted_aes_key))).strip()
                     aes_key = bytes.fromhex(aes_key_hex)
 
                     response = await client.get(file_url)
-                    if response.status_code != 200:
-                        raise Exception("Failed to download encrypted file")
+                    response.raise_for_status()
 
                     content = response.content
-                    nonce = content[:16]
-                    tag = content[16:32]
-                    ciphertext = content[32:]
+                    nonce, tag, ciphertext = content[:16], content[16:32], content[32:]
 
                     cipher = AES.new(aes_key, AES.MODE_EAX, nonce=nonce)
                     decrypted = cipher.decrypt_and_verify(ciphertext, tag)
@@ -149,10 +163,10 @@ async def get_user_files(authorization: str = Header(...)):
                     return {
                         "file_name": file_name,
                         "file_type": file_type,
-                        "decrypted_content": f"Error decrypting: {str(e)}"
+                        "error": f"Error decrypting: {str(e)}"
                     }
 
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=10.0) as client:
             tasks = [process_file(f, client) for f in files]
             decrypted_files = await asyncio.gather(*tasks)
 
@@ -181,19 +195,26 @@ async def admin_get_all_user_files(
 
         with get_db() as conn:
             with conn.cursor() as cursor:
-                cursor.execute(
-                    """
+                cursor.execute("""
                     SELECT u.id, u.email, f.file_name, f.file_type, f.file_url, f.encrypted_aes_key
                     FROM files f
                     JOIN users u ON f.owner_id = u.id
                     ORDER BY u.email
                     LIMIT %s OFFSET %s
-                    """,
-                    (limit, offset)
-                )
+                """, (limit, offset))
                 files = cursor.fetchall()
 
-        key_cache = {}  
+                if not files:
+                    return {
+                        "message": "No files found",
+                        "success_files": [],
+                        "failed_files": [],
+                        "page": page,
+                        "limit": limit,
+                        "total_processed": 0
+                    }
+
+        key_cache = {}
         semaphore = asyncio.Semaphore(10)
 
         async def process_admin_file(record, client):
@@ -215,20 +236,19 @@ async def admin_get_all_user_files(
                     aes_key = bytes.fromhex(aes_key_hex_dec)
 
                     response = await client.get(file_url)
-                    if response.status_code != 200:
-                        raise Exception("Failed to download file")
+                    response.raise_for_status()
+
                     content = response.content
-                    nonce = content[:16]
-                    tag = content[16:32]
-                    ciphertext = content[32:]
+                    nonce, tag, ciphertext = content[:16], content[16:32], content[32:]
 
                     cipher = AES.new(aes_key, AES.MODE_EAX, nonce=nonce)
                     decrypted = cipher.decrypt_and_verify(ciphertext, tag)
 
-                    if file_type.startswith("text/"):
-                        decoded = decrypted.decode("utf-8", errors="ignore")
-                    else:
-                        decoded = base64.b64encode(decrypted).decode("utf-8")
+                    decoded = (
+                        decrypted.decode("utf-8", errors="ignore")
+                        if file_type.startswith("text/")
+                        else base64.b64encode(decrypted).decode("utf-8")
+                    )
 
                     return {
                         "user_email": email,

@@ -13,7 +13,6 @@ router = APIRouter()
 env_file = ".env"
 load_dotenv(dotenv_path=env_file)
 
-# ----------------------------
 @router.post("/register")
 def register(data: RegisterRequest):
     try:
@@ -54,17 +53,26 @@ def register(data: RegisterRequest):
 @router.post("/login")
 def login(data: LoginRequest):
     try:
-        with get_db() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute("SELECT id, email, password, role FROM users WHERE email = %s", (data.email,))
-                user = cursor.fetchone()
-                if not user:
-                    raise HTTPException(status_code=401, detail="Email is incorrect")
+        # Only open DB connection once
+        with get_db() as conn, conn.cursor() as cursor:
+            # Query only the needed columns (already good)
+            cursor.execute("""
+                SELECT id, email, password, role 
+                FROM users 
+                WHERE email = %s
+            """, (data.email,))
+            user = cursor.fetchone()
 
-                db_id, db_email, db_hashed_password, db_role = user
-                if not bcrypt.checkpw(data.password.encode("utf-8"), db_hashed_password.encode("utf-8")):
-                    raise HTTPException(status_code=401, detail="Password is incorrect")
+            if not user:
+                raise HTTPException(status_code=401, detail="Invalid credentials")
 
+            db_id, db_email, db_hashed_password, db_role = user
+
+            # Use bcrypt in constant-time comparison
+            if not bcrypt.checkpw(data.password.encode(), db_hashed_password.encode()):
+                raise HTTPException(status_code=401, detail="Invalid credentials")
+
+        # Create JWT (already fast)
         token = create_access_token({
             "user_id": db_id,
             "role": db_role
@@ -72,12 +80,12 @@ def login(data: LoginRequest):
 
         return {
             "message": "Login successful",
-            "access_token": token
+            "access_token": token,
+            "role": db_role
         }
 
     except HTTPException:
-        raise  
-
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail="Internal server error")
     

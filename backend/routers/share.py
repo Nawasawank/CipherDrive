@@ -7,6 +7,8 @@ from schemas.share import ShareFileRequest
 from Cryptodome.Cipher import AES
 import requests
 import base64
+import httpx
+import asyncio
 import os
 
 router = APIRouter()
@@ -22,7 +24,6 @@ async def share_file(payload: ShareFileRequest, authorization: str = Header(...)
         owner_id = decoded_token["user_id"]
         file_name = payload.file_name
         shared_with_email = payload.shared_with_email
-        permission = payload.permission
 
         with get_db() as conn:
             with conn.cursor() as cur:
@@ -63,10 +64,10 @@ async def share_file(payload: ShareFileRequest, authorization: str = Header(...)
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO shared_files (file_id, shared_with, encrypted_aes_key, permission)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO shared_files (file_id, shared_with, encrypted_aes_key)
+                    VALUES (%s, %s, %s)
                     """,
-                    (file_id, recipient_id, encrypted_aes_key_for_recipient, permission),
+                    (file_id, recipient_id, encrypted_aes_key_for_recipient),
                 )
                 conn.commit()
 
@@ -75,6 +76,7 @@ async def share_file(payload: ShareFileRequest, authorization: str = Header(...)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.get("/shared-files")
 async def get_shared_files(authorization: str = Header(...)):
     try:
@@ -82,73 +84,81 @@ async def get_shared_files(authorization: str = Header(...)):
         decoded_token = verify_token(token)
         if not decoded_token:
             raise HTTPException(status_code=401, detail="Invalid or expired token")
+
         user_id = decoded_token["user_id"]
 
         with get_db() as conn:
             with conn.cursor() as cursor:
-                cursor.execute("SELECT email FROM users WHERE id = %s", (user_id,))
-                row = cursor.fetchone()
-                if not row:
-                    raise HTTPException(status_code=404, detail="User not found")
-                user_email = row[0]
-
-        env_key_prefix = f"USER_{user_email.upper().replace('@', '_').replace('.', '_')}"
-        encrypted_private_key = os.getenv(f"{env_key_prefix}_ENCRYPTED_PRIVATE_KEY")
-        aes_key_hex = os.getenv(f"{env_key_prefix}_AES_KEY")
-        if not encrypted_private_key or not aes_key_hex:
-            raise HTTPException(status_code=404, detail="Encrypted key not found in environment")
-
-        private_key = decrypt_private_key(encrypted_private_key, bytes.fromhex(aes_key_hex))
-
-        with get_db() as conn:
-            with conn.cursor() as cursor:
                 cursor.execute("""
-                    SELECT f.file_name, f.file_type, f.file_url,
-                           sf.encrypted_aes_key, u.email AS owner_email, sf.permission
+                    SELECT u.email, f.file_name, f.file_type, f.file_url,
+                           sf.encrypted_aes_key, o.email AS owner_email
                     FROM shared_files sf
                     JOIN files f ON sf.file_id = f.id
-                    JOIN users u ON f.owner_id = u.id
+                    JOIN users u ON sf.shared_with = u.id
+                    JOIN users o ON f.owner_id = o.id
                     WHERE sf.shared_with = %s
                 """, (user_id,))
-                shared_files = cursor.fetchall()
+                result = cursor.fetchall()
 
-        decrypted_files = []
-        for record in shared_files:
-            file_name, file_type, file_url, shared_encrypted_aes_key, owner_email, permission = record
-            try:
-                aes_key_hex_decrypted = decrypt_rsa(private_key, int(shared_encrypted_aes_key)).strip()
-                file_aes_key = bytes.fromhex(aes_key_hex_decrypted)
+                if not result:
+                    return {
+                        "message": "No shared files found",
+                        "shared_files": []
+                    }
 
-                response = requests.get(file_url)
-                if response.status_code != 200:
-                    raise Exception("Download failed")
+                user_email = result[0][0]
+                shared_files = result
 
-                content = response.content
-                nonce, tag, ciphertext = content[:16], content[16:32], content[32:]
+        prefix = f"USER_{user_email.upper().replace('@', '_').replace('.', '_')}"
+        encrypted_private_key = os.getenv(f"{prefix}_ENCRYPTED_PRIVATE_KEY")
+        aes_key_hex = os.getenv(f"{prefix}_AES_KEY")
+        if not encrypted_private_key or not aes_key_hex:
+            raise HTTPException(status_code=404, detail="Missing decryption keys")
 
-                cipher = AES.new(file_aes_key, AES.MODE_EAX, nonce=nonce)
-                decrypted_content = cipher.decrypt_and_verify(ciphertext, tag)
+        private_key = await asyncio.to_thread(decrypt_private_key, encrypted_private_key, bytes.fromhex(aes_key_hex))
 
-                if file_type.startswith("text/"):
-                    content = decrypted_content.decode("utf-8", errors="ignore")
-                else:
-                    content = base64.b64encode(decrypted_content).decode("utf-8")
+        semaphore = asyncio.Semaphore(10)
 
-                decrypted_files.append({
-                    "file_name": file_name,
-                    "file_type": file_type,
-                    "owner_email": owner_email,
-                    "permission": permission,
-                    "decrypted_content": content
-                })
+        async def process_shared_file(file, client):
+            file_name, file_type, file_url, encrypted_aes_key, owner_email = file[1:]
+            async with semaphore:
+                try:
+                    aes_key_hex = (await asyncio.to_thread(decrypt_rsa, private_key, int(encrypted_aes_key))).strip()
+                    aes_key = bytes.fromhex(aes_key_hex)
 
-            except Exception as e:
-                decrypted_files.append({
-                    "file_name": file_name,
-                    "owner_email": owner_email,
-                    "permission": permission,
-                    "error": str(e)
-                })
+                    response = await client.get(file_url)
+                    response.raise_for_status()
+
+                    content = response.content
+                    nonce, tag, ciphertext = content[:16], content[16:32], content[32:]
+
+                    cipher = AES.new(aes_key, AES.MODE_EAX, nonce=nonce)
+                    decrypted = cipher.decrypt_and_verify(ciphertext, tag)
+
+                    decoded = (
+                        decrypted.decode("utf-8", errors="ignore")
+                        if file_type.startswith("text/")
+                        else base64.b64encode(decrypted).decode("utf-8")
+                    )
+
+                    return {
+                        "file_name": file_name,
+                        "file_type": file_type,
+                        "decrypted_content": decoded,
+                        "owner_email": owner_email,
+                    }
+
+                except Exception as e:
+                    return {
+                        "file_name": file_name,
+                        "file_type": file_type,
+                        "owner_email": owner_email,
+                        "error": f"Error decrypting: {str(e)}"
+                    }
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            tasks = [process_shared_file(f, client) for f in shared_files]
+            decrypted_files = await asyncio.gather(*tasks)
 
         return {
             "message": "Shared files retrieved and decrypted successfully",
