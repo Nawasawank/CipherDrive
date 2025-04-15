@@ -15,10 +15,12 @@ export default function MainPage() {
   const [email, setEmail] = useState("");
   const [showLogout, setShowLogout] = useState(false);
   const [previewFile, setPreviewFile] = useState(null);
+
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [shareTargetFile, setShareTargetFile] = useState(null);
   const [shareEmail, setShareEmail] = useState("");
   const [sharePermission, setSharePermission] = useState("view");
+
   const userMenuRef = useRef(null);
 
   useEffect(() => {
@@ -36,20 +38,18 @@ export default function MainPage() {
     return () => document.removeEventListener("click", handleClickOutside);
   }, []);
 
-  useEffect(() => {
-    const handleEsc = (e) => {
-      if (e.key === "Escape") {
-        setPreviewFile(null);
-      }
-    };
-    document.addEventListener("keydown", handleEsc);
-    return () => document.removeEventListener("keydown", handleEsc);
-  }, []);
-
   const fetchUser = async () => {
     try {
+      const cachedEmail = localStorage.getItem("user_email");
+      if (cachedEmail) {
+        setEmail(cachedEmail);
+        return;
+      }
+
       const res = await getUserDetails();
-      setEmail(res?.email || "");
+      const userEmail = res?.email || "";
+      setEmail(userEmail);
+      localStorage.setItem("user_email", userEmail);
     } catch (err) {
       console.error("Failed to load user", err);
     }
@@ -86,6 +86,7 @@ export default function MainPage() {
 
   const handleLogout = () => {
     localStorage.removeItem("access_token");
+    localStorage.removeItem("user_email");
     window.location.href = "/";
   };
 
@@ -166,91 +167,71 @@ export default function MainPage() {
           {viewMode === "my-files" ? "My Files" : "Shared with Me"}
         </h1>
 
-        {loading ? (
-          <div className="loading-text">Loading files...</div>
-        ) : (
-          <div className="file-grid">
-            {files.length > 0 ? (
-              files.map((file) => (
-                <div key={file.file_name} className="file-tile">
-                  <div
-                    className="file-thumbnail"
-                    onClick={() => handlePreview(file)}
-                  >
-                    {file.file_type.startsWith("image/") ? (
-                      <img
-                        src={`data:${file.file_type};base64,${file.decrypted_content}`}
-                        alt={file.file_name}
-                      />
-                    ) : file.file_type === "application/pdf" ? (
-                      <img src="/pdf-icon.png" alt="PDF" className="file-icon" />
-                    ) : (
-                      <img src="/file-icon.png" alt="file" className="file-icon" />
-                    )}
-                  </div>
-                  <div className="file-name">{file.file_name}</div>
-                  <div className="file-tile-actions">
-                    <button onClick={() => handleDownload(file)}>Download</button>
-                    {viewMode === "my-files" && (
-                      <button onClick={() => openShareModal(file)}>Share</button>
-                    )}
-                  </div>
+        <div className="file-grid">
+          {loading ? (
+            [...Array(6)].map((_, i) => (
+              <div className="file-tile skeleton" key={i}>
+                <div className="file-thumbnail skeleton-box"></div>
+                <div className="file-name skeleton-text"></div>
+                <div className="file-tile-actions">
+                  <div className="skeleton-button"></div>
+                  <div className="skeleton-button"></div>
                 </div>
-              ))
-            ) : (
-              <p>No files {viewMode === "shared" ? "shared with you" : "uploaded"} yet.</p>
-            )}
-          </div>
-        )}
+              </div>
+            ))
+          ) : files.length > 0 ? (
+            files.map((file) => (
+              <div key={file.file_name} className="file-tile">
+                <div
+                  className="file-thumbnail"
+                  onClick={() => handlePreview(file)}
+                >
+                  {file.file_type.startsWith("image/") ? (
+                    <img
+                      src={`data:${file.file_type};base64,${file.decrypted_content}`}
+                      alt={file.file_name}
+                    />
+                  ) : file.file_type === "application/pdf" ? (
+                    <img src="/pdf-icon.png" alt="PDF" className="file-icon" />
+                  ) : (
+                    <img src="/file-icon.png" alt="file" className="file-icon" />
+                  )}
+                </div>
+                <div className="file-name">{file.file_name}</div>
+                <div className="file-tile-actions">
+                  <button onClick={() => handleDownload(file)}>Download</button>
+                  {viewMode === "my-files" && (
+                    <button onClick={() => openShareModal(file)}>Share</button>
+                  )}
+                </div>
+              </div>
+            ))
+          ) : (
+            <p>No files {viewMode === "shared" ? "shared with you" : "uploaded"} yet.</p>
+          )}
+        </div>
 
-        {/* 🧾 Fullscreen Clean PDF Viewer */}
         {previewFile && (
           <div className="preview-overlay" onClick={() => setPreviewFile(null)}>
             <div className="preview-content" onClick={(e) => e.stopPropagation()}>
-              <button
-                onClick={() => setPreviewFile(null)}
-                style={{
-                  position: "absolute",
-                  top: 20,
-                  right: 30,
-                  fontSize: "28px",
-                  color: "white",
-                  background: "none",
-                  border: "none",
-                  cursor: "pointer",
-                  zIndex: 1001,
-                }}
-              >
-                ✕
-              </button>
               {previewFile.file_type === "application/pdf" ? (
-                <object
-                  data={`data:${previewFile.file_type};base64,${previewFile.decrypted_content}`}
-                  type="application/pdf"
+                <iframe
+                  src={`data:${previewFile.file_type};base64,${previewFile.decrypted_content}`}
                   className="pdf-fullscreen"
-                >
-                  <p>
-                    PDF preview not supported in this browser.{" "}
-                    <a
-                      href={`data:${previewFile.file_type};base64,${previewFile.decrypted_content}`}
-                      download={previewFile.file_name}
-                    >
-                      Download PDF
-                    </a>
-                  </p>
-                </object>
+                  frameBorder="0"
+                  title="PDF Preview"
+                ></iframe>
               ) : (
                 <img
                   src={`data:${previewFile.file_type};base64,${previewFile.decrypted_content}`}
                   alt={previewFile.file_name}
-                  style={{ maxWidth: "100%", maxHeight: "90vh" }}
+                  style={{ maxWidth: "100%", maxHeight: "80vh" }}
                 />
               )}
             </div>
           </div>
         )}
 
-        {/* Share Modal */}
         {shareModalOpen && (
           <div className="share-overlay" onClick={handleShareCancel}>
             <div className="share-content" onClick={(e) => e.stopPropagation()}>
