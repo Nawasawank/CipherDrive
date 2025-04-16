@@ -99,15 +99,12 @@ process_pool = concurrent.futures.ProcessPoolExecutor()
 @router.get("/my-files")
 async def get_user_files(authorization: str = Header(...)):
     try:
-        # Verify JWT token
         token = authorization.split(" ")[1]
         decoded_token = verify_token(token)
         if not decoded_token:
             raise HTTPException(status_code=401, detail="Invalid or expired token")
         user_id = decoded_token["user_id"]
 
-        # Fetch files and user's email using an asynchronous DB query (or run blocking call in a thread)
-        # For demonstration, we'll use a thread offload for blocking code.
         def get_records():
             with get_db() as conn:
                 with conn.cursor() as cursor:
@@ -125,7 +122,6 @@ async def get_user_files(authorization: str = Header(...)):
         user_email = records[0][0]
         files = records
 
-        # Decrypt user's private key once
         prefix = f"USER_{user_email.upper().replace('@', '_').replace('.', '_')}"
         encrypted_private_key = os.getenv(f"{prefix}_ENCRYPTED_PRIVATE_KEY")
         aes_key_hex = os.getenv(f"{prefix}_AES_KEY")
@@ -142,7 +138,6 @@ async def get_user_files(authorization: str = Header(...)):
         async def decrypt_file(file_data, client):
             _, file_name, file_type, file_url, encrypted_aes_key = file_data
             async with semaphore:
-                # Offload RSA decryption to a process pool to bypass GIL
                 decrypted_aes_key_hex = (await asyncio.get_running_loop().run_in_executor(
                     process_pool, decrypt_rsa, private_key, int(encrypted_aes_key)
                 )).strip()
@@ -153,7 +148,6 @@ async def get_user_files(authorization: str = Header(...)):
                 content = response.content
 
                 nonce, tag, ciphertext = content[:16], content[16:32], content[32:]
-                # Offload AES decryption in a thread if necessary
                 decrypted = await asyncio.to_thread(
                     lambda: AES.new(aes_key, AES.MODE_EAX, nonce).decrypt_and_verify(ciphertext, tag)
                 )

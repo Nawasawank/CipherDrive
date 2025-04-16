@@ -45,7 +45,6 @@ async def get_files_by_user(user_id: str = Query(...), authorization: str = Head
         if not decoded_token or decoded_token.get("role") != "admin":
             raise HTTPException(status_code=403, detail="Admins only")
         
-        # Offload the DB query from the main thread
         def query_files():
             with get_db() as conn:
                 with conn.cursor() as cursor:
@@ -60,17 +59,14 @@ async def get_files_by_user(user_id: str = Query(...), authorization: str = Head
         if not records:
             return {"message": "No files found", "files": []}
 
-        # Extract the user's email from the first record (all records share the same owner)
         user_email, *_ = records[0]
         
-        # Retrieve environment keys for the user
         prefix = f"USER_{user_email.upper().replace('@', '_').replace('.', '_')}"
         encrypted_private_key = os.getenv(f"{prefix}_ENCRYPTED_PRIVATE_KEY")
         aes_key_hex = os.getenv(f"{prefix}_AES_KEY")
         if not encrypted_private_key or not aes_key_hex:
             raise HTTPException(status_code=404, detail="Missing keys for user")
         
-        # Decrypt the user's private key once, offloaded to a thread
         private_key = await asyncio.to_thread(
             decrypt_private_key,
             encrypted_private_key,
