@@ -53,9 +53,7 @@ def register(data: RegisterRequest):
 @router.post("/login")
 def login(data: LoginRequest):
     try:
-        # Only open DB connection once
         with get_db() as conn, conn.cursor() as cursor:
-            # Query only the needed columns (already good)
             cursor.execute("""
                 SELECT id, email, password, role 
                 FROM users 
@@ -72,7 +70,6 @@ def login(data: LoginRequest):
             if not bcrypt.checkpw(data.password.encode(), db_hashed_password.encode()):
                 raise HTTPException(status_code=401, detail="Invalid credentials")
 
-        # Create JWT (already fast)
         token = create_access_token({
             "user_id": db_id,
             "role": db_role
