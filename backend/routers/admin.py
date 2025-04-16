@@ -6,7 +6,6 @@ from dotenv import load_dotenv
 import httpx
 from Cryptodome.Cipher import AES
 from Cryptodome.Random import get_random_bytes
-
 from supabase_client import supabase
 from utils.aes import decrypt_private_key
 from utils.rsa import encrypt_rsa, decrypt_rsa

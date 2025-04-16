@@ -177,111 +177,111 @@ async def get_user_files(authorization: str = Header(...)):
 
 
 
-@router.get("/admin/all-files")
-async def admin_get_all_user_files(
-    authorization: str = Header(...),
-    page: int = Query(1, ge=1),
-    limit: int = Query(10, le=100)
-):
-    try:
-        token = authorization.split(" ")[1]
-        decoded_token = verify_token(token)
-        if not decoded_token or decoded_token.get("role") != "admin":
-            raise HTTPException(status_code=403, detail="Admins only")
+# @router.get("/admin/all-files")
+# async def admin_get_all_user_files(
+#     authorization: str = Header(...),
+#     page: int = Query(1, ge=1),
+#     limit: int = Query(10, le=100)
+# ):
+#     try:
+#         token = authorization.split(" ")[1]
+#         decoded_token = verify_token(token)
+#         if not decoded_token or decoded_token.get("role") != "admin":
+#             raise HTTPException(status_code=403, detail="Admins only")
 
-        offset = (page - 1) * limit
+#         offset = (page - 1) * limit
 
-        with get_db() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute("""
-                    SELECT u.id, u.email, f.file_name, f.file_type, f.file_url, f.encrypted_aes_key
-                    FROM files f
-                    JOIN users u ON f.owner_id = u.id
-                    ORDER BY u.email
-                    LIMIT %s OFFSET %s
-                """, (limit, offset))
-                files = cursor.fetchall()
+#         with get_db() as conn:
+#             with conn.cursor() as cursor:
+#                 cursor.execute("""
+#                     SELECT u.id, u.email, f.file_name, f.file_type, f.file_url, f.encrypted_aes_key
+#                     FROM files f
+#                     JOIN users u ON f.owner_id = u.id
+#                     ORDER BY u.email
+#                     LIMIT %s OFFSET %s
+#                 """, (limit, offset))
+#                 files = cursor.fetchall()
 
-                if not files:
-                    return {
-                        "message": "No files found",
-                        "success_files": [],
-                        "failed_files": [],
-                        "page": page,
-                        "limit": limit,
-                        "total_processed": 0
-                    }
+#                 if not files:
+#                     return {
+#                         "message": "No files found",
+#                         "success_files": [],
+#                         "failed_files": [],
+#                         "page": page,
+#                         "limit": limit,
+#                         "total_processed": 0
+#                     }
 
-        key_cache = {}
-        semaphore = asyncio.Semaphore(10)
+#         key_cache = {}
+#         semaphore = asyncio.Semaphore(10)
 
-        async def process_admin_file(record, client):
-            user_id, email, file_name, file_type, file_url, encrypted_aes_key = record
-            async with semaphore:
-                try:
-                    if email not in key_cache:
-                        prefix = f"USER_{email.upper().replace('@', '_').replace('.', '_')}"
-                        enc_priv = os.getenv(f"{prefix}_ENCRYPTED_PRIVATE_KEY")
-                        aes_hex = os.getenv(f"{prefix}_AES_KEY")
-                        if not enc_priv or not aes_hex:
-                            raise Exception("Missing environment keys")
-                        private_key = await asyncio.to_thread(decrypt_private_key, enc_priv, bytes.fromhex(aes_hex))
-                        key_cache[email] = private_key
-                    else:
-                        private_key = key_cache[email]
+#         async def process_admin_file(record, client):
+#             user_id, email, file_name, file_type, file_url, encrypted_aes_key = record
+#             async with semaphore:
+#                 try:
+#                     if email not in key_cache:
+#                         prefix = f"USER_{email.upper().replace('@', '_').replace('.', '_')}"
+#                         enc_priv = os.getenv(f"{prefix}_ENCRYPTED_PRIVATE_KEY")
+#                         aes_hex = os.getenv(f"{prefix}_AES_KEY")
+#                         if not enc_priv or not aes_hex:
+#                             raise Exception("Missing environment keys")
+#                         private_key = await asyncio.to_thread(decrypt_private_key, enc_priv, bytes.fromhex(aes_hex))
+#                         key_cache[email] = private_key
+#                     else:
+#                         private_key = key_cache[email]
 
-                    aes_key_hex_dec = (await asyncio.to_thread(decrypt_rsa, private_key, int(encrypted_aes_key))).strip()
-                    aes_key = bytes.fromhex(aes_key_hex_dec)
+#                     aes_key_hex_dec = (await asyncio.to_thread(decrypt_rsa, private_key, int(encrypted_aes_key))).strip()
+#                     aes_key = bytes.fromhex(aes_key_hex_dec)
 
-                    response = await client.get(file_url)
-                    response.raise_for_status()
+#                     response = await client.get(file_url)
+#                     response.raise_for_status()
 
-                    content = response.content
-                    nonce, tag, ciphertext = content[:16], content[16:32], content[32:]
+#                     content = response.content
+#                     nonce, tag, ciphertext = content[:16], content[16:32], content[32:]
 
-                    cipher = AES.new(aes_key, AES.MODE_EAX, nonce=nonce)
-                    decrypted = cipher.decrypt_and_verify(ciphertext, tag)
+#                     cipher = AES.new(aes_key, AES.MODE_EAX, nonce=nonce)
+#                     decrypted = cipher.decrypt_and_verify(ciphertext, tag)
 
-                    decoded = (
-                        decrypted.decode("utf-8", errors="ignore")
-                        if file_type.startswith("text/")
-                        else base64.b64encode(decrypted).decode("utf-8")
-                    )
+#                     decoded = (
+#                         decrypted.decode("utf-8", errors="ignore")
+#                         if file_type.startswith("text/")
+#                         else base64.b64encode(decrypted).decode("utf-8")
+#                     )
 
-                    return {
-                        "user_email": email,
-                        "file_name": file_name,
-                        "file_type": file_type,
-                        "decrypted_content": decoded
-                    }
+#                     return {
+#                         "user_email": email,
+#                         "file_name": file_name,
+#                         "file_type": file_type,
+#                         "decrypted_content": decoded
+#                     }
 
-                except Exception as e:
-                    return {
-                        "user_email": email,
-                        "file_name": file_name,
-                        "file_type": file_type,
-                        "error": str(e)
-                    }
+#                 except Exception as e:
+#                     return {
+#                         "user_email": email,
+#                         "file_name": file_name,
+#                         "file_type": file_type,
+#                         "error": str(e)
+#                     }
 
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            tasks = [process_admin_file(record, client) for record in files]
-            results = await asyncio.gather(*tasks)
+#         async with httpx.AsyncClient(timeout=5.0) as client:
+#             tasks = [process_admin_file(record, client) for record in files]
+#             results = await asyncio.gather(*tasks)
 
-        success_files = [res for res in results if "decrypted_content" in res and "error" not in res]
-        failed_files = [res for res in results if "error" in res]
-        total_processed = len(success_files) + len(failed_files)
+#         success_files = [res for res in results if "decrypted_content" in res and "error" not in res]
+#         failed_files = [res for res in results if "error" in res]
+#         total_processed = len(success_files) + len(failed_files)
 
-        return {
-            "message": "Files processed",
-            "success_files": success_files,
-            "failed_files": failed_files,
-            "page": page,
-            "limit": limit,
-            "total_processed": total_processed
-        }
+#         return {
+#             "message": "Files processed",
+#             "success_files": success_files,
+#             "failed_files": failed_files,
+#             "page": page,
+#             "limit": limit,
+#             "total_processed": total_processed
+#         }
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/delete-file")
 async def delete_file(file_name: str, authorization: str = Header(...)):
