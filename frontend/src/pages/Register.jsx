@@ -3,13 +3,15 @@ import { register } from "../services/api";
 import { useNavigate } from "react-router-dom";
 import "../styles/Register.css";
 import SuccessOverlay from "../components/SuccessOverlay";
+import ErrorOverlay from "../components/ErrorOverlay";
 
 export default function Register() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [overlayError, setOverlayError] = useState("");
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -25,19 +27,28 @@ export default function Register() {
   const handleRegister = async (e) => {
     e.preventDefault();
     setLoading(true);
-    setError("");
+    setOverlayError("");
+
+    if (password !== confirmPassword) {
+      setOverlayError("Passwords do not match");
+      setLoading(false);
+      return;
+    }
+
     try {
       await register(email, password);
       setShowSuccess(true);
     } catch (err) {
-      setError(err.response?.data?.detail || "Registration failed");
+      setOverlayError(err.response?.data?.detail || "Registration failed");
     } finally {
       setLoading(false);
     }
   };
 
   const handleOverlayClose = () => {
-    navigate("/");
+    setOverlayError("");        // for error overlay
+    setShowSuccess(false);      // for success overlay
+    navigate("/");              // go back to home or login
   };
 
   return (
@@ -48,8 +59,6 @@ export default function Register() {
         </div>
         <h1 className="auth-title">Create your account</h1>
         <p className="auth-subtitle">to get started with SecureDrive</p>
-
-        {error && <div className="auth-error">{error}</div>}
 
         <form className="auth-form" onSubmit={handleRegister}>
           <div className="form-group">
@@ -80,6 +89,20 @@ export default function Register() {
             <label htmlFor="password" className="auth-label">Password</label>
           </div>
 
+          <div className="form-group">
+            <input
+              type="password"
+              id="confirmPassword"
+              className="auth-input"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              required
+              placeholder=" "
+              autoComplete="new-password"
+            />
+            <label htmlFor="confirmPassword" className="auth-label">Confirm Password</label>
+          </div>
+
           <div className="auth-actions">
             <a href="/" className="auth-link">Already have an account?</a>
             <button type="submit" className="auth-button" disabled={loading}>
@@ -92,6 +115,13 @@ export default function Register() {
           </div>
         </form>
       </div>
+
+      {overlayError && (
+        <ErrorOverlay
+          message={overlayError}
+          onClose={() => setOverlayError("")}
+        />
+      )}
 
       {showSuccess && (
         <SuccessOverlay
