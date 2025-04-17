@@ -16,15 +16,17 @@ router = APIRouter()
 @router.post("/share-file")
 async def share_file(payload: ShareFileRequest, authorization: str = Header(...)):
     try:
+        # Step 1: Decode and validate token
         token = authorization.split(" ")[1]
         decoded_token = verify_token(token)
-        if not decoded_token:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        if not decoded_token or decoded_token.get("role") != "user":
+            raise HTTPException(status_code=403, detail="Only users with role 'user' can access this endpoint")
 
         owner_id = decoded_token["user_id"]
         file_name = payload.file_name
         shared_with_email = payload.shared_with_email
 
+        # Step 2: Fetch file record
         with get_db() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -36,11 +38,15 @@ async def share_file(payload: ShareFileRequest, authorization: str = Header(...)
                     raise HTTPException(status_code=404, detail="File not found or no permission")
                 file_id, encrypted_aes_key = file_record
 
-                cur.execute("SELECT id, rsa_public_key FROM users WHERE email = %s", (shared_with_email,))
+                cur.execute("SELECT id, rsa_public_key, role FROM users WHERE email = %s", (shared_with_email,))
                 recipient = cur.fetchone()
                 if not recipient:
                     raise HTTPException(status_code=404, detail="Recipient user not found")
-                recipient_id, recipient_public_key = recipient
+                recipient_id, recipient_public_key, recipient_role = recipient
+
+                if recipient_role == "admin":
+                    raise HTTPException(status_code=403, detail="You cannot share files with an admin account")
+
 
                 cur.execute("SELECT email FROM users WHERE id = %s", (owner_id,))
                 owner_row = cur.fetchone()
@@ -82,8 +88,8 @@ async def get_shared_files(authorization: str = Header(...)):
     try:
         token = authorization.split(" ")[1]
         decoded_token = verify_token(token)
-        if not decoded_token:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        if not decoded_token or decoded_token.get("role") != "user":
+            raise HTTPException(status_code=403, detail="Only users with role 'user' can access this endpoint")
 
         user_id = decoded_token["user_id"]
 

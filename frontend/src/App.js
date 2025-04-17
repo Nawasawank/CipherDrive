@@ -23,8 +23,8 @@ export default function App() {
           <Route path="/admin" element={<AdminPage />} />
         </Route>
         
-        {/* Catch-all redirect to an appropriate page based on role */}
         <Route path="*" element={<ProtectedRoute allowedRoles={[]} />} />
+
       </Routes>
     </Router>
   );

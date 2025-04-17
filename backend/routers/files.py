@@ -32,8 +32,8 @@ async def upload_file(file: UploadFile, authorization: str = Header(...)):
     try:
         token = authorization.split(" ")[1]
         decoded_token = verify_token(token)
-        if not decoded_token:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        if not decoded_token or decoded_token.get("role") != "user":
+            raise HTTPException(status_code=403, detail="Only users with role 'user' can access this endpoint")
         user_id = decoded_token["user_id"]
 
         with get_db() as conn:
@@ -101,8 +101,8 @@ async def get_user_files(authorization: str = Header(...)):
     try:
         token = authorization.split(" ")[1]
         decoded_token = verify_token(token)
-        if not decoded_token:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        if not decoded_token or decoded_token.get("role") != "user":
+            raise HTTPException(status_code=403, detail="Only users with role 'user' can access this endpoint")
         user_id = decoded_token["user_id"]
 
         def get_records():
@@ -288,8 +288,8 @@ async def delete_file(file_name: str, authorization: str = Header(...)):
     try:
         token = authorization.split(" ")[1]
         decoded_token = verify_token(token)
-        if not decoded_token:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        if not decoded_token or decoded_token.get("role") != "user":
+            raise HTTPException(status_code=403, detail="Only users with role 'user' can access this endpoint")
 
         user_id = decoded_token["user_id"]
 
