@@ -16,7 +16,6 @@ router = APIRouter()
 @router.post("/share-file")
 async def share_file(payload: ShareFileRequest, authorization: str = Header(...)):
     try:
-        # Step 1: Decode and validate token
         token = authorization.split(" ")[1]
         decoded_token = verify_token(token)
         if not decoded_token or decoded_token.get("role") != "user":
@@ -26,7 +25,6 @@ async def share_file(payload: ShareFileRequest, authorization: str = Header(...)
         file_name = payload.file_name
         shared_with_email = payload.shared_with_email
 
-        # Step 2: Fetch file record
         with get_db() as conn:
             with conn.cursor() as cur:
                 cur.execute(
