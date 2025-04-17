@@ -38,11 +38,14 @@ async def upload_file(file: UploadFile, authorization: str = Header(...)):
 
         with get_db() as conn:
             with conn.cursor() as cursor:
-                cursor.execute("SELECT rsa_public_key FROM users WHERE id = %s", (user_id,))
+                cursor.execute("SELECT is_locked, rsa_public_key FROM users WHERE id = %s", (user_id,))
                 row = cursor.fetchone()
                 if not row:
                     raise HTTPException(status_code=404, detail="User not found")
-                public_key = row[0]
+                is_locked, public_key = row
+
+                if is_locked:
+                    raise HTTPException(status_code=403, detail="Your account is locked due to suspicious activity")
 
                 cursor.execute("SELECT file_name FROM files WHERE owner_id = %s", (user_id,))
                 existing_names = {r[0] for r in cursor.fetchall()}
@@ -72,6 +75,15 @@ async def upload_file(file: UploadFile, authorization: str = Header(...)):
                 "encrypted_aes_key": str(encrypted_aes_key)
             }).execute()
         )
+
+        # Log upload
+        with get_db() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO user_activity_log (user_id, action, metadata) VALUES (%s, %s, %s)",
+                    (user_id, 'upload', file_name)
+                )
+                conn.commit()
 
         cipher = AES.new(aes_key, AES.MODE_EAX, nonce=nonce)
         decrypted = cipher.decrypt_and_verify(ciphertext, tag)
@@ -105,28 +117,35 @@ async def get_user_files(authorization: str = Header(...)):
             raise HTTPException(status_code=403, detail="Only users with role 'user' can access this endpoint")
         user_id = decoded_token["user_id"]
 
-        def get_records():
+        def get_user_info_and_records():
             with get_db() as conn:
                 with conn.cursor() as cursor:
+                    cursor.execute("SELECT is_locked, email FROM users WHERE id = %s", (user_id,))
+                    user_row = cursor.fetchone()
+                    if not user_row:
+                        raise HTTPException(status_code=404, detail="User not found")
+                    is_locked, email = user_row
+                    if is_locked:
+                        raise HTTPException(status_code=403, detail="Your account is locked")
+
                     cursor.execute("""
                         SELECT u.email, f.file_name, f.file_type, f.file_url, f.encrypted_aes_key
                         FROM users u
                         JOIN files f ON u.id = f.owner_id
                         WHERE u.id = %s
                     """, (user_id,))
-                    return cursor.fetchall()
-        records = await asyncio.to_thread(get_records)
-        
+                    return email, cursor.fetchall()
+
+        user_email, records = await asyncio.to_thread(get_user_info_and_records)
         if not records:
             return { "message": "No files found", "files": [] }
-        user_email = records[0][0]
-        files = records
 
         prefix = f"USER_{user_email.upper().replace('@', '_').replace('.', '_')}"
         encrypted_private_key = os.getenv(f"{prefix}_ENCRYPTED_PRIVATE_KEY")
         aes_key_hex = os.getenv(f"{prefix}_AES_KEY")
         if not encrypted_private_key or not aes_key_hex:
             raise HTTPException(status_code=404, detail="Key not found in environment")
+
         private_key = await asyncio.to_thread(
             decrypt_private_key,
             encrypted_private_key,
@@ -163,7 +182,7 @@ async def get_user_files(authorization: str = Header(...)):
                 }
 
         async with httpx.AsyncClient(timeout=10.0) as client:
-            tasks = [decrypt_file(f, client) for f in files]
+            tasks = [decrypt_file(f, client) for f in records]
             decrypted_files = await asyncio.gather(*tasks)
 
         return {
@@ -295,6 +314,10 @@ async def delete_file(file_name: str, authorization: str = Header(...)):
 
         with get_db() as conn:
             with conn.cursor() as cursor:
+                cursor.execute("SELECT is_locked FROM users WHERE id = %s", (user_id,))
+                if cursor.fetchone()[0]:
+                    raise HTTPException(status_code=403, detail="Your account is locked")
+
                 cursor.execute("""
                     SELECT file_url FROM files WHERE file_name = %s AND owner_id = %s
                 """, (file_name, user_id))
@@ -317,3 +340,4 @@ async def delete_file(file_name: str, authorization: str = Header(...)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+

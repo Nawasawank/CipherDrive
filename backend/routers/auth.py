@@ -53,22 +53,41 @@ def register(data: RegisterRequest):
 @router.post("/login")
 def login(data: LoginRequest):
     try:
-        with get_db() as conn, conn.cursor() as cursor:
-            cursor.execute("""
-                SELECT id, email, password, role 
-                FROM users 
-                WHERE email = %s
-            """, (data.email,))
-            user = cursor.fetchone()
+        with get_db() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT id, email, password, role, is_locked 
+                    FROM users 
+                    WHERE email = %s
+                """, (data.email,))
+                user = cursor.fetchone()
 
-            if not user:
-                raise HTTPException(status_code=401, detail="Invalid credentials")
+                if not user:
+                    cursor.execute(
+                        "INSERT INTO user_activity_log (user_id, action, metadata) VALUES (%s, %s, %s)",
+                        (None, 'failed_login', data.email)
+                    )
+                    conn.commit()
+                    raise HTTPException(status_code=401, detail="Invalid credentials")
 
-            db_id, db_email, db_hashed_password, db_role = user
+                db_id, db_email, db_hashed_password, db_role, is_locked = user
 
-            # Use bcrypt in constant-time comparison
-            if not bcrypt.checkpw(data.password.encode(), db_hashed_password.encode()):
-                raise HTTPException(status_code=401, detail="Invalid credentials")
+                if is_locked:
+                    raise HTTPException(status_code=403, detail="Your account is locked")
+
+                if not bcrypt.checkpw(data.password.encode(), db_hashed_password.encode()):
+                    cursor.execute(
+                        "INSERT INTO user_activity_log (user_id, action, metadata) VALUES (%s, %s, %s)",
+                        (db_id, 'failed_login', data.email)
+                    )
+                    conn.commit()
+                    raise HTTPException(status_code=401, detail="Invalid credentials")
+
+                cursor.execute(
+                    "INSERT INTO user_activity_log (user_id, action, metadata) VALUES (%s, %s, %s)",
+                    (db_id, 'login', data.email)
+                )
+                conn.commit()
 
         token = create_access_token({
             "user_id": db_id,
@@ -85,7 +104,6 @@ def login(data: LoginRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail="Internal server error")
-    
 
 @router.get("/user-details")
 def get_user_details(authorization: str = Header(...)):

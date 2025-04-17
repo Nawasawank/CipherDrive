@@ -14,6 +14,52 @@ from db import get_db
 
 router = APIRouter()
 
+@router.get("/stats")
+async def get_admin_stats(authorization: str = Header(...)):
+    try:
+        token = authorization.split(" ")[1]
+        decoded_token = verify_token(token)
+        if not decoded_token or decoded_token.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Admins only")
+
+        with get_db() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT COUNT(*) FROM files")
+                total_uploads = cursor.fetchone()[0]
+
+                cursor.execute("SELECT COUNT(*) FROM shared_files")
+                total_shares = cursor.fetchone()[0]
+
+                cursor.execute("""
+                    SELECT u.email, COUNT(f.id) as upload_count
+                    FROM users u
+                    LEFT JOIN files f ON u.id = f.owner_id
+                    WHERE u.role = 'user'
+                    GROUP BY u.email
+                """)
+                upload_per_user = cursor.fetchall()
+
+                cursor.execute("""
+                    SELECT u.email, COUNT(sf.id) as shared_count
+                    FROM users u
+                    LEFT JOIN files f ON u.id = f.owner_id
+                    LEFT JOIN shared_files sf ON f.id = sf.file_id
+                    WHERE u.role = 'user'
+                    GROUP BY u.email
+                """)
+                share_per_user = cursor.fetchall()
+
+        return {
+            "total_uploads": total_uploads,
+            "total_shares": total_shares,
+            "uploads_per_user": upload_per_user,
+            "shares_per_user": share_per_user
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/users")
 async def get_all_users(authorization: str = Header(...)):
     try:
@@ -36,89 +82,127 @@ async def get_all_users(authorization: str = Header(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/user-files")
-async def get_files_by_user(user_id: str = Query(...), authorization: str = Header(...)):
+
+@router.get("/activity-log")
+async def get_activity_log(authorization: str = Header(...)):
     try:
         token = authorization.split(" ")[1]
         decoded_token = verify_token(token)
         if not decoded_token or decoded_token.get("role") != "admin":
             raise HTTPException(status_code=403, detail="Admins only")
-        
-        def query_files():
-            with get_db() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute("""
-                        SELECT u.email, f.file_name, f.file_type, f.file_url, f.encrypted_aes_key
-                        FROM users u
-                        JOIN files f ON u.id = f.owner_id
-                        WHERE u.id = %s AND role = 'user'
-                    """, (user_id,))
-                    return cursor.fetchall()
-        records = await asyncio.to_thread(query_files)
-        if not records:
-            return {"message": "No files found", "files": []}
 
-        user_email, *_ = records[0]
-        
-        prefix = f"USER_{user_email.upper().replace('@', '_').replace('.', '_')}"
-        encrypted_private_key = os.getenv(f"{prefix}_ENCRYPTED_PRIVATE_KEY")
-        aes_key_hex = os.getenv(f"{prefix}_AES_KEY")
-        if not encrypted_private_key or not aes_key_hex:
-            raise HTTPException(status_code=404, detail="Missing keys for user")
-        
-        private_key = await asyncio.to_thread(
-            decrypt_private_key,
-            encrypted_private_key,
-            bytes.fromhex(aes_key_hex)
-        )
-        
-        semaphore = asyncio.Semaphore(10)
-        
-        async def process_file(record, client: httpx.AsyncClient):
-            _, file_name, file_type, file_url, encrypted_aes_key = record
-            async with semaphore:
-                try:
-                    loop = asyncio.get_running_loop()
-                    decrypted_aes_key_hex = (await loop.run_in_executor(
-                        None, decrypt_rsa, private_key, int(encrypted_aes_key)
-                    )).strip()
-                    aes_key = bytes.fromhex(decrypted_aes_key_hex)
-                    
-                    response = await client.get(file_url)
-                    response.raise_for_status()
-                    content = response.content
-                    
-                    nonce, tag, ciphertext = content[:16], content[16:32], content[32:]
-                    decrypted = await asyncio.to_thread(
-                        lambda: AES.new(aes_key, AES.MODE_EAX, nonce=nonce).decrypt_and_verify(ciphertext, tag)
-                    )
-                    
-                    decoded = (
-                        decrypted.decode("utf-8", errors="ignore")
-                        if file_type.startswith("text/")
-                        else base64.b64encode(decrypted).decode("utf-8")
-                    )
-                    
-                    return {
-                        "file_name": file_name,
-                        "file_type": file_type,
-                        "decrypted_content": decoded
-                    }
-                except Exception as e:
-                    return {
-                        "file_name": file_name,
-                        "file_type": file_type,
-                        "error": str(e)
-                    }
-        
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            tasks = [process_file(record, client) for record in records]
-            decrypted_files = await asyncio.gather(*tasks)
-        
+        with get_db() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT u.email, a.action, a.metadata, a.created_at
+                    FROM user_activity_log a
+                    LEFT JOIN users u ON a.user_id = u.id
+                    ORDER BY a.created_at DESC
+                    LIMIT 100
+                """)
+                logs = cursor.fetchall()
+
+                enriched_logs = []
+                for log in logs:
+                    actor_email, action, metadata, timestamp = log
+
+                    if action == 'share':
+                        cursor.execute("""
+                            SELECT f.file_name, ru.email AS recipient_email
+                            FROM files f
+                            JOIN shared_files sf ON f.id = sf.file_id
+                            JOIN users ru ON sf.shared_with = ru.id
+                            WHERE f.file_name = %s OR ru.email = %s
+                            LIMIT 1
+                        """, (metadata, metadata))
+                        result = cursor.fetchone()
+                        if result:
+                            file_name, recipient_email = result
+                            metadata_display = f"shared '{file_name}' with {recipient_email}"
+                        else:
+                            metadata_display = f"shared with unknown ({metadata})"
+                    else:
+                        metadata_display = metadata
+
+                    enriched_logs.append({
+                        "email": actor_email,
+                        "action": action,
+                        "metadata": metadata_display,
+                        "timestamp": timestamp.isoformat()
+                    })
+
         return {
-            "message": "Files retrieved",
-            "files": decrypted_files
+            "message": "Recent activity log",
+            "logs": enriched_logs
         }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.get("/suspicious-activity")
+async def get_suspicious_activity(authorization: str = Header(...)):
+    try:
+        token = authorization.split(" ")[1]
+        decoded_token = verify_token(token)
+        if not decoded_token or decoded_token.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Admins only")
+
+        blocked_users = []
+
+        with get_db() as conn:
+            with conn.cursor() as cursor:
+                # Fast Uploaders
+                cursor.execute("""
+                    SELECT u.id, u.email, COUNT(*) as upload_count, MIN(a.created_at), MAX(a.created_at)
+                    FROM user_activity_log a
+                    JOIN users u ON a.user_id = u.id
+                    WHERE a.action = 'upload' AND a.created_at > NOW() - INTERVAL '1 minute'
+                    GROUP BY u.id, u.email
+                    HAVING COUNT(*) > 100
+                """)
+                fast_uploaders = cursor.fetchall()
+
+                for u in fast_uploaders:
+                    cursor.execute("UPDATE users SET is_locked = TRUE WHERE id = %s", (u[0],))
+                    blocked_users.append(u[1])
+
+                # Oversharers
+                cursor.execute("""
+                    SELECT u.id, u.email, COUNT(DISTINCT a.metadata) as unique_shares, MIN(a.created_at), MAX(a.created_at)
+                    FROM user_activity_log a
+                    JOIN users u ON a.user_id = u.id
+                    WHERE a.action = 'share'
+                    GROUP BY u.id, u.email
+                    HAVING COUNT(DISTINCT a.metadata) > 50
+                """)
+                oversharers = cursor.fetchall()
+
+                for u in oversharers:
+                    cursor.execute("UPDATE users SET is_locked = TRUE WHERE id = %s", (u[0],))
+                    blocked_users.append(u[1])
+
+                # Failed Login Attempts
+                cursor.execute("""
+                    SELECT u.id, u.email, COUNT(*) as failed_logins, array_agg(a.metadata), MIN(a.created_at), MAX(a.created_at)
+                    FROM user_activity_log a
+                    JOIN users u ON a.user_id = u.id
+                    WHERE a.action = 'failed_login' AND a.created_at > NOW() - INTERVAL '1 hour'
+                    GROUP BY u.id, u.email
+                    HAVING COUNT(*) > 3
+                """)
+                failed_logins = cursor.fetchall()
+
+                for u in failed_logins:
+                    cursor.execute("UPDATE users SET is_locked = TRUE WHERE id = %s", (u[0],))
+                    blocked_users.append(u[1])
+
+                conn.commit()
+
+        return {
+            "blocked_users": blocked_users,
+            "message": "Suspicious users have been blocked."
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

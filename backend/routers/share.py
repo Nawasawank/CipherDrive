@@ -27,6 +27,14 @@ async def share_file(payload: ShareFileRequest, authorization: str = Header(...)
 
         with get_db() as conn:
             with conn.cursor() as cur:
+                cur.execute("SELECT is_locked, email FROM users WHERE id = %s", (owner_id,))
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="User not found")
+                is_locked, owner_email = row
+                if is_locked:
+                    raise HTTPException(status_code=403, detail="Your account is locked")
+
                 cur.execute(
                     "SELECT id, encrypted_aes_key FROM files WHERE file_name = %s AND owner_id = %s",
                     (file_name, owner_id),
@@ -44,13 +52,6 @@ async def share_file(payload: ShareFileRequest, authorization: str = Header(...)
 
                 if recipient_role == "admin":
                     raise HTTPException(status_code=403, detail="You cannot share files with an admin account")
-
-
-                cur.execute("SELECT email FROM users WHERE id = %s", (owner_id,))
-                owner_row = cur.fetchone()
-                if not owner_row:
-                    raise HTTPException(status_code=404, detail="Owner not found")
-                owner_email = owner_row[0]
 
         env_key_prefix = f"USER_{owner_email.upper().replace('@', '_').replace('.', '_')}"
         encrypted_private_key = os.getenv(f"{env_key_prefix}_ENCRYPTED_PRIVATE_KEY")
@@ -73,6 +74,11 @@ async def share_file(payload: ShareFileRequest, authorization: str = Header(...)
                     """,
                     (file_id, recipient_id, encrypted_aes_key_for_recipient),
                 )
+                # Log sharing to user_activity_log
+                cur.execute(
+                    "INSERT INTO user_activity_log (user_id, action, metadata) VALUES (%s, %s, %s)",
+                    (owner_id, 'share', shared_with_email)
+                )
                 conn.commit()
 
         return {"message": "File shared successfully"}
@@ -93,6 +99,14 @@ async def get_shared_files(authorization: str = Header(...)):
 
         with get_db() as conn:
             with conn.cursor() as cursor:
+                cursor.execute("SELECT is_locked, email FROM users WHERE id = %s", (user_id,))
+                row = cursor.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="User not found")
+                is_locked, user_email = row
+                if is_locked:
+                    raise HTTPException(status_code=403, detail="Your account is locked")
+
                 cursor.execute("""
                     SELECT u.email, f.file_name, f.file_type, f.file_url,
                            sf.encrypted_aes_key, o.email AS owner_email
@@ -110,7 +124,6 @@ async def get_shared_files(authorization: str = Header(...)):
                         "shared_files": []
                     }
 
-                user_email = result[0][0]
                 shared_files = result
 
         prefix = f"USER_{user_email.upper().replace('@', '_').replace('.', '_')}"
