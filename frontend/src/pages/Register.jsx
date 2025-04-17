@@ -55,10 +55,10 @@ export default function Register() {
     <div className="auth-container">
       <div className="auth-form-container">
         <div className="auth-logo">
-          <div className="logo-text">SecureDrive</div>
+          <div className="logo-text">CipherDrive</div>
         </div>
         <h1 className="auth-title">Create your account</h1>
-        <p className="auth-subtitle">to get started with SecureDrive</p>
+        <p className="auth-subtitle">to get started with CipherDrive</p>
 
         <form className="auth-form" onSubmit={handleRegister}>
           <div className="form-group">
@@ -105,7 +105,7 @@ export default function Register() {
 
           <div className="auth-actions">
             <a href="/" className="auth-link">Already have an account?</a>
-            <button type="submit" className="auth-button" disabled={loading}>
+            <button type="submit" className="auth-button1" disabled={loading}>
               {loading ? (
                 <span className="loading-spinner"></span>
               ) : (

@@ -200,7 +200,7 @@ export default function MainPage() {
   return (
     <div className="main-wrapper">
       <aside className="sidebar">
-        <h2>SecureDrive</h2>
+        <h2>CipherDrive</h2>
         <label className="upload-btn">
           Upload
           <input type="file" hidden onChange={handleFileChange} />

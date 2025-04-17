@@ -39,7 +39,6 @@ export const register = async (email, password) => {
 export const getUserDetails = async () => {
     const response = await api.get("/auth/user-details");
     console.log(response.data);
-    
     return response.data;
 };
 
@@ -50,42 +49,90 @@ export const shareFile = async (file_name, shared_with_email, permission) => {
       permission,
     });
     return res.data;
-  };
+};
 
-  export const getSharedFiles = async () => {
+export const getSharedFiles = async () => {
     const res = await api.get("/share/shared-files");
     return res.data;
-  };
+};
 
-  export const getFileMetadata = async () => {
-    const res = await api.get("/my-files/metadata",);
+export const getFileMetadata = async () => {
+    const res = await api.get("/my-files/metadata");
     return res.data;
-  };
-  
-  export const previewFile = async (fileName) => {
-    const res = await axios.get("/my-files/preview", {file_name: fileName },
-  );
-    return res.data;
-  };
+};
 
-  export const getAllUsers = async () => {
+export const previewFile = async (fileName) => {
+    const res = await axios.get("/my-files/preview", {file_name: fileName });
+    return res.data;
+};
+
+export const getAllUsers = async () => {
     const res = await api.get("/admin/users");
     return res.data;
-  };
+};
 
-  export const getUserFilesById = async (userId) => {
+export const getUserFilesById = async (userId) => {
     const res = await api.get("/admin/user-files", {
       params: { user_id: userId },
     });
     return res.data;
-  };
+};
 
-  export const deleteFile = async (file_name) => {
+export const deleteFile = async (file_name) => {
     const res = await api.delete("/files/delete-file", {
         params: { file_name },
     });
     return res.data;
 };
-  
+
+export const getAdminStats = async () => {
+  const res = await api.get("/admin/stats");
+  return res.data;
+};
+
+export const getActivityLog = async () => {
+  const res = await api.get("/admin/activity-log");
+  return res.data;
+};
+
+export const getSuspiciousActivity = async () => {
+  const res = await api.get("/admin/suspicious-activity");
+  return res.data;
+};
+
+export const getUserActivity = async (email) => {
+  const res = await api.get("/admin/user-activity", {
+    params: { email },
+  });
+  return res.data;
+};
+
+export const searchUsers = async (query) => {
+  const res = await api.get("/admin/search-users", {
+    params: { query },
+  });
+  return res.data;
+};
+
+export const filterActivity = async (action_type, date) => {
+  const res = await api.get("/admin/filter-activity", {
+    params: { action_type, date },
+  });
+  return res.data;
+};
+
+export const lockUser = async (email) => {
+  const res = await api.put("/admin/lock-user", null, {
+    params: { email },
+  });
+  return res.data;
+};
+
+export const unlockUser = async (email) => {
+  const res = await api.put("/admin/unlock-user", null, {
+    params: { email },
+  });
+  return res.data;
+};
 
 export default api;

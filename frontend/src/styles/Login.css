@@ -130,7 +130,7 @@
   font-weight: 500;
 }
 
-.auth-button {
+.auth-button1 {
   background-color: #1a73e8;
   color: white;
   border: none;
@@ -142,7 +142,7 @@
   transition: background-color 0.2s;
 }
 
-.auth-button:hover {
+.auth-button1:hover {
   background-color: #1669d9;
 }
 

@@ -119,7 +119,7 @@
   font-weight: 500;
 }
 
-.auth-button {
+.auth-button1 {
   background-color: #1a73e8;
   color: white;
   border: none;
@@ -131,7 +131,7 @@
   transition: background-color 0.2s;
 }
 
-.auth-button:hover {
+.auth-button1:hover {
   background-color: #1669d9;
 }
 
@@ -145,7 +145,7 @@
   text-align: center;
 }
 
-.auth-button:disabled {
+.auth-button1:disabled {
   background-color: #a0c2f2;
   cursor: not-allowed;
   display: flex;

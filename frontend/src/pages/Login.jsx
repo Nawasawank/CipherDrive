@@ -47,10 +47,10 @@ export default function Login() {
     <div className="auth-container">
       <div className="auth-form-container">
         <div className="auth-logo">
-          <div className="logo-text">SecureDrive</div>
+          <div className="logo-text">CipherDrive</div>
         </div>
         <h1 className="auth-title">Sign in</h1>
-        <p className="auth-subtitle">to continue to SecureDrive</p>
+        <p className="auth-subtitle">to continue to CipherDrive</p>
 
         <form className="auth-form" onSubmit={handleLogin}>
           <div className="form-group">
@@ -83,7 +83,7 @@ export default function Login() {
 
           <div className="auth-actions">
             <a href="/register" className="auth-link">Create account</a>
-            <button type="submit" className="auth-button" disabled={loading}>
+            <button type="submit" className="auth-button1" disabled={loading}>
               {loading ? <span className="loading-spinner"></span> : "Sign in"}
             </button>
           </div>
