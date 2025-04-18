@@ -101,10 +101,19 @@ export const getActivityLog = async (page = 1, limit = 10) => {
 };
 
 
-export const getSuspiciousActivity = async () => {
-  const res = await api.get("/admin/suspicious-activity");
+export const getSuspiciousActivity = async ({ page = 1, limit = 10, startDate, endDate } = {}) => {
+  const params = new URLSearchParams();
+
+  params.append("page", page);
+  params.append("limit", limit);
+
+  if (startDate) params.append("start_date", startDate);  
+  if (endDate) params.append("end_date", endDate);       
+
+  const res = await api.get(`/admin/suspicious-activity?${params.toString()}`);
   return res.data;
 };
+
 
 export const getUserActivity = async (email, page = 1, limit = 10) => {
   const res = await api.get("/admin/user-activity", {
@@ -142,5 +151,11 @@ export const unlockUser = async (email) => {
   });
   return res.data;
 };
+
+export const getAllActivityLogs = async () => {
+  const res = await api.get("/admin/allactivity");
+  return res.data;
+};
+
 
 export default api;

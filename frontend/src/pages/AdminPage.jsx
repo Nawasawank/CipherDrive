@@ -8,7 +8,8 @@ import {
   searchUsers,
   lockUser,
   unlockUser,
-  getUserActivity
+  getUserActivity,
+  getAllActivityLogs
 } from "../services/api";
 import { 
   BarChart, 
@@ -48,7 +49,18 @@ export default function AdminPanel() {
   const searchLimit = 10;
   const [userPage, setUserPage] = useState(1);
   const [userTotal, setUserTotal] = useState(0);
+  console.log(userTotal);
+  
   const userLimit = 10;
+
+  const [suspiciousPage, setSuspiciousPage] = useState(1);
+  const [suspiciousLimit] = useState(10);
+  const [suspiciousTotal, setSuspiciousTotal] = useState(0);
+  const [suspiciousStartDate, setSuspiciousStartDate] = useState("");
+  const [suspiciousEndDate, setSuspiciousEndDate] = useState("");
+  const [isUserLoading, setIsUserLoading] = useState(false);
+
+
 
   
 
@@ -56,25 +68,68 @@ export default function AdminPanel() {
 
   const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884d8", "#82ca9d"];
 
+  const fetchSuspicious = async () => {
+    try {
+      const res = await getSuspiciousActivity({
+        page: suspiciousPage,
+        limit: suspiciousLimit,
+        startDate: suspiciousStartDate,
+        endDate: suspiciousEndDate
+      });
+  
+      setSuspicious(res);
+      setSuspiciousTotal(res.total);
+    } catch (err) {
+      console.error("Failed to load suspicious activity", err);
+    }
+  };
+  
   useEffect(() => {
-    const fetchAllData = async () => {
+    const fetchDashboardData = async () => {
       setIsLoading(true);
       try {
         await Promise.all([
           fetchStats(),
-          fetchActivity(1),
-          fetchSuspicious(),
-          fetchUsers(1)
+          fetchActivity(1, true),
+          fetchUsers(1),
         ]);
       } catch (err) {
-        console.error("Error fetching data:", err);
+        console.error("Error fetching dashboard data:", err);
       } finally {
         setIsLoading(false);
       }
     };
-    
-    fetchAllData();
-  }, []);
+  
+    const fetchUserPage = async () => {
+      setIsLoading(true);
+      try {
+        await fetchUsers(1);
+      } catch (err) {
+        console.error("Error fetching users:", err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+  
+    const fetchSuspiciousPage = async () => {
+      setIsLoading(true);
+      try {
+        await fetchSuspicious();
+      } catch (err) {
+        console.error("Error fetching suspicious data:", err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+  
+    if (view === "dashboard") fetchDashboardData();
+    else if (view === "users") fetchUserPage();
+    else if (view === "suspicious") fetchSuspiciousPage();
+    else if (view === "logs") fetchActivity(activityPage);
+  }, [view]);
+  
+  
+  
 
   const fetchStats = async () => {
     try {
@@ -91,36 +146,34 @@ export default function AdminPanel() {
   const [activityTotal, setActivityTotal] = useState(0);
   const activityLimit = 10;
   
-  const fetchActivity = async (page = 1) => {
+  const fetchActivity = async (page = 1, fetchAll = false) => {
     try {
-      const res = await getActivityLog(page, activityLimit);
-      setActivityLogs(res.logs);
-      setActivityTotal(res.total);
-      setActivityPage(page);
+      if (fetchAll) {
+        const res = await getAllActivityLogs();
+        setActivityLogs(res.logs);
+        setActivityPage(1);
+        setActivityTotal(res.logs.length);
+      } else {
+        const res = await getActivityLog(page, activityLimit);
+        setActivityLogs(res.logs);
+        setActivityPage(page);
+        setActivityTotal(res.total);
+      }
     } catch (err) {
       console.error("Failed to load activity log", err);
     }
   };
   
+  
 
-  const fetchSuspicious = async () => {
-    try {
-      const res = await getSuspiciousActivity();
-      setSuspicious(res);
-      return res;
-    } catch (err) {
-      console.error("Failed to load suspicious activity", err);
-      return null;
-    }
-  };
 
   const fetchUsers = async (page = 1) => {
     try {
       const res = await getAllUsers(page, userLimit);
       setUsers(res.users);
       setUserPage(page);
-      setUserTotal(res.total); // Make sure this line is executing with the correct value
-      console.log("User total:", res.total); // Add this to debug
+      setUserTotal(res.total);
+      console.log("User total:", res.total); 
     } catch (err) {
       console.error("Failed to load users", err);
     }
@@ -190,7 +243,7 @@ export default function AdminPanel() {
 
   const viewUserActivity = async (email, page = 1) => {
     try {
-      setIsLoading(true);
+      setIsUserLoading(true); // local, not global
       const res = await getUserActivity(email, page, userActivityLimit);
       setSelectedUser(email);
       setUserActivityData(res.logs);
@@ -200,9 +253,10 @@ export default function AdminPanel() {
     } catch (err) {
       console.error("Failed to get user activity", err);
     } finally {
-      setIsLoading(false);
+      setIsUserLoading(false); // local done
     }
   };
+  
   
 
   const handleLogout = () => {
@@ -236,31 +290,41 @@ export default function AdminPanel() {
   };
 
   const preparePieData = () => {
-    if (!stats) return [];
-    return [
-      { name: "Uploads", value: stats.total_uploads },
-      { name: "Shares", value: stats.total_shares }
-    ];
+    if (!activityLogs || activityLogs.length === 0) return [];
+  
+    const actionCounts = activityLogs.reduce((acc, log) => {
+      acc[log.action] = (acc[log.action] || 0) + 1;
+      return acc;
+    }, {});
+  
+    return Object.entries(actionCounts).map(([action, count]) => ({
+      name: action.charAt(0).toUpperCase() + action.slice(1),
+      value: count,
+    }));
   };
+  
 
   const prepareActivityData = () => {
     if (!activityLogs || activityLogs.length === 0) return [];
-    
-    const grouped = activityLogs.reduce((acc, log) => {
-      const date = log.timestamp.split('T')[0];
-      if (!acc[date]) acc[date] = 0;
-      acc[date]++;
-      return acc;
-    }, {});
-    
-    return Object.entries(grouped)
-      .map(([date, count]) => ({
-        date,
-        activities: count
-      }))
-      .sort((a, b) => new Date(a.date) - new Date(b.date))
-      .slice(-7); // Last 7 days
+  
+    const today = new Date();
+    const past7Days = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(today);
+      d.setDate(today.getDate() - (6 - i));
+      const dateStr = d.toISOString().split('T')[0];
+      return { date: dateStr, activities: 0 };
+    });
+  
+    activityLogs.forEach(log => {
+      const logDate = log.timestamp.split("T")[0];
+      const entry = past7Days.find(d => d.date === logDate);
+      if (entry) entry.activities++;
+    });
+  
+    return past7Days;
   };
+  
+  
 
   return (
     <div className="admin-panel-dashboard">
@@ -293,7 +357,7 @@ export default function AdminPanel() {
                 <div className="stats-summary-cards">
                   <div className="stat-card">
                     <h4>Total Users</h4>
-                    <p>{users.length}</p>
+                    <p>{userTotal}</p>
                   </div>
                   <div className="stat-card">
                     <h4>Total Uploads</h4>
@@ -581,90 +645,130 @@ export default function AdminPanel() {
             )}
 
 
-            {view === "suspicious" && suspicious && (
-              <div>
-                <h2>🚨 Security Alerts</h2>
-                
-                <div className="alert-summary-cards">
-                  <div className="alert-card critical">
-                    <h4>Blocked Users</h4>
-                    <p>{suspicious.blocked_users.length || 0}</p>
-                  </div>
-                  <div className="alert-card warning">
-                    <h4>Suspicious Activities</h4>
-                    <p>{suspicious.suspicious_summary.length || 0}</p>
-                  </div>
-                  <div className="alert-card info">
-                    <h4>Last Incident</h4>
-                    <p>
-                      {suspicious.suspicious_summary.length > 0 
-                        ? new Date(suspicious.suspicious_summary[0].last_seen).toLocaleDateString() 
-                        : 'None'}
-                    </p>
-                  </div>
-                </div>
-                
-                {suspicious.blocked_users.length > 0 && (
-                  <div className="blocked-users-section">
-                    <h3>Blocked Users</h3>
-                    <div className="blocked-users-list">
-                      {suspicious.blocked_users.map((user, idx) => (
-                        <div key={idx} className="blocked-user-card">
-                          <span className="user-email">{user}</span>
-                          <button 
-                            className="unblock-button"
-                            onClick={() => handleUnlockUser(user)}
-                          >
-                            Unblock
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                
-                <div className="suspicious-activity-section">
-                  <h3>Suspicious Activity Log</h3>
-                  {suspicious.suspicious_summary.length > 0 ? (
-                    <table className="suspicious-table">
-                      <thead>
-                        <tr>
-                          <th>User</th>
-                          <th>Action</th>
-                          <th>Count</th>
-                          <th>First Seen</th>
-                          <th>Last Seen</th>
-                          <th>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {suspicious.suspicious_summary.map((entry, idx) => (
-                          <tr key={idx} className="suspicious-entry">
-                            <td>{entry.email}</td>
-                            <td>{entry.action}</td>
-                            <td>{entry.count}</td>
-                            <td>{new Date(entry.first_seen).toLocaleString()}</td>
-                            <td>{new Date(entry.last_seen).toLocaleString()}</td>
-                            <td>
-                              <button 
-                                className="action-button block-button"
-                                onClick={() => handleLockUser(entry.email)}
-                              >
-                                Block
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  ) : (
-                    <div className="no-data-message">
-                      <p>No suspicious activities detected</p>
-                    </div>
-                  )}
-                </div>
+{view === "suspicious" && suspicious && (
+  <div>
+    <h2>🚨 Security Alerts</h2>
+    
+    <div className="alert-summary-cards">
+      <div className="alert-card critical">
+        <h4>Blocked Users</h4>
+        <p>{suspicious.blocked_users.length || 0}</p>
+      </div>
+      <div className="alert-card warning">
+        <h4>Suspicious Activities</h4>
+        <p>{suspicious.suspicious_summary.length || 0}</p>
+      </div>
+      <div className="alert-card info">
+        <h4>Last Incident</h4>
+        <p>
+          {suspicious.suspicious_summary.length > 0 
+            ? new Date(suspicious.suspicious_summary[0].last_seen).toLocaleDateString() 
+            : 'None'}
+        </p>
+      </div>
+    </div>
+
+    <div className="filter-container">
+      <input
+        type="date"
+        value={suspiciousStartDate}
+        onChange={(e) => setSuspiciousStartDate(e.target.value)}
+      />
+      <input
+        type="date"
+        value={suspiciousEndDate}
+        onChange={(e) => setSuspiciousEndDate(e.target.value)}
+      />
+      <button onClick={() => fetchSuspicious(1)}>Apply Filter</button>
+      <button onClick={() => {
+        setSuspiciousStartDate('');
+        setSuspiciousEndDate('');
+        fetchSuspicious(1);
+      }}>Reset</button>
+    </div>
+
+    {suspicious.blocked_users.length > 0 && (
+      <div className="blocked-users-section">
+        <h3>Blocked Users</h3>
+        <div className="blocked-users-list">
+          {suspicious.blocked_users.map((user, idx) => (
+            <div key={idx} className="blocked-user-card">
+              <span className="user-email">{user}</span>
+              <button 
+                className="unblock-button"
+                onClick={() => handleUnlockUser(user)}
+              >
+                Unblock
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+
+        <div className="suspicious-activity-section">
+          <h3>Suspicious Activity Log</h3>
+          {suspicious.suspicious_summary.length > 0 ? (
+            <>
+              <table className="suspicious-table">
+                <thead>
+                  <tr>
+                    <th>User</th>
+                    <th>Action</th>
+                    <th>Count</th>
+                    <th>First Seen</th>
+                    <th>Last Seen</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {suspicious.suspicious_summary.map((entry, idx) => (
+                    <tr key={idx} className="suspicious-entry">
+                      <td>{entry.email}</td>
+                      <td>{entry.action}</td>
+                      <td>{entry.count}</td>
+                      <td>{new Date(entry.first_seen).toLocaleString()}</td>
+                      <td>{new Date(entry.last_seen).toLocaleString()}</td>
+                      <td>
+                        <button 
+                          className="action-button block-button"
+                          onClick={() => handleLockUser(entry.email)}
+                        >
+                          Block
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <div className="pagination-controls">
+                <button
+                  disabled={suspiciousPage <= 1}
+                  onClick={() => fetchSuspicious(suspiciousPage - 1)}
+                >
+                  ← Prev
+                </button>
+                <span>
+                  Page {suspiciousPage} of {Math.ceil(suspiciousTotal / suspiciousLimit)}
+                </span>
+                <button
+                  disabled={suspiciousPage >= Math.ceil(suspiciousTotal / suspiciousLimit)}
+                  onClick={() => fetchSuspicious(suspiciousPage + 1)}
+                >
+                  Next →
+                </button>
               </div>
-            )}
+            </>
+          ) : (
+            <div className="no-data-message">
+              <p>No suspicious activities detected</p>
+            </div>
+          )}
+        </div>
+      </div>
+    )}
+
 
             {view === "userDetail" && selectedUser && (
               <div>

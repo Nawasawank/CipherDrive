@@ -9,6 +9,7 @@ from utils.jwt_handler import verify_token
 from db import get_db
 from datetime import datetime
 from typing import Optional
+from datetime import datetime, timedelta
 
 router = APIRouter()
 
@@ -99,6 +100,60 @@ async def get_all_users(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/allactivity")
+async def get_all_activity(authorization: str = Header(...)):
+    try:
+        token = authorization.split(" ")[1]
+        decoded_token = verify_token(token)
+        if not decoded_token or decoded_token.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Admins only")
+
+        with get_db() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT u.email, a.action, a.metadata, a.created_at
+                    FROM user_activity_log a
+                    LEFT JOIN users u ON a.user_id = u.id
+                    ORDER BY a.created_at DESC
+                """)
+                logs = cursor.fetchall()
+
+                enriched_logs = []
+                for log in logs:
+                    actor_email, action, metadata, timestamp = log
+
+                    if action == 'share':
+                        cursor.execute("""
+                            SELECT f.file_name, ru.email AS recipient_email
+                            FROM files f
+                            JOIN shared_files sf ON f.id = sf.file_id
+                            JOIN users ru ON sf.shared_with = ru.id
+                            WHERE f.file_name = %s OR ru.email = %s
+                            LIMIT 1
+                        """, (metadata, metadata))
+                        result = cursor.fetchone()
+                        if result:
+                            file_name, recipient_email = result
+                            metadata_display = f"shared '{file_name}' with {recipient_email}"
+                        else:
+                            metadata_display = f"shared with unknown ({metadata})"
+                    else:
+                        metadata_display = metadata
+
+                    enriched_logs.append({
+                        "email": actor_email,
+                        "action": action,
+                        "metadata": metadata_display,
+                        "timestamp": timestamp.isoformat()
+                    })
+
+        return {
+            "message": "All activity logs",
+            "logs": enriched_logs
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/activity-log")
 async def get_activity_log(
@@ -171,7 +226,13 @@ async def get_activity_log(
 
 
 @router.get("/suspicious-activity")
-async def get_suspicious_activity(authorization: str = Header(...)):
+async def get_suspicious_activity(
+    authorization: str = Header(...),
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None)
+):
     try:
         token = authorization.split(" ")[1]
         decoded_token = verify_token(token)
@@ -181,6 +242,25 @@ async def get_suspicious_activity(authorization: str = Header(...)):
         blocked_users = []
         suspicious_summary = []
 
+        date_filter = ""
+        params = []
+
+        if start_date:
+            try:
+                datetime.strptime(start_date, "%Y-%m-%d")
+                date_filter += " AND a.created_at >= %s"
+                params.append(start_date)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid start_date format. Use YYYY-MM-DD.")
+
+        if end_date:
+            try:
+                end_dt = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+                date_filter += " AND a.created_at < %s"
+                params.append(end_dt.strftime("%Y-%m-%d"))
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid end_date format. Use YYYY-MM-DD.")
+
         with get_db() as conn:
             with conn.cursor() as cursor:
                 cursor.execute("SELECT id, email FROM users WHERE is_locked = TRUE")
@@ -188,18 +268,15 @@ async def get_suspicious_activity(authorization: str = Header(...)):
                 locked_users = {row[0]: row[1] for row in locked_result}
                 blocked_users = list(locked_users.values())
 
-                #Suspicious - Fast Uploaders
-                cursor.execute("""
+                cursor.execute(f"""
                     SELECT u.id, u.email, COUNT(*) AS count, MIN(a.created_at), MAX(a.created_at)
                     FROM user_activity_log a
                     JOIN users u ON u.id = a.user_id
-                    WHERE a.action = 'upload' AND a.created_at > NOW() - INTERVAL '1 minute'
+                    WHERE a.action = 'upload' {date_filter}
                     GROUP BY u.id, u.email
                     HAVING COUNT(*) > 100
-                """)
-                uploads = cursor.fetchall()
-                for row in uploads:
-                    user_id, email, count, first_seen, last_seen = row
+                """, params)
+                for user_id, email, count, first_seen, last_seen in cursor.fetchall():
                     suspicious_summary.append({
                         "email": email,
                         "action": "upload",
@@ -208,19 +285,16 @@ async def get_suspicious_activity(authorization: str = Header(...)):
                         "last_seen": last_seen.isoformat(),
                         "is_locked": user_id in locked_users
                     })
-                
-                #Suspicious - Over-Sharers
-                cursor.execute("""
+
+                cursor.execute(f"""
                     SELECT u.id, u.email, COUNT(DISTINCT a.metadata) AS count, MIN(a.created_at), MAX(a.created_at)
                     FROM user_activity_log a
                     JOIN users u ON u.id = a.user_id
-                    WHERE a.action = 'share'
+                    WHERE a.action = 'share' {date_filter}
                     GROUP BY u.id, u.email
                     HAVING COUNT(DISTINCT a.metadata) > 50
-                """)
-                shares = cursor.fetchall()
-                for row in shares:
-                    user_id, email, count, first_seen, last_seen = row
+                """, params)
+                for user_id, email, count, first_seen, last_seen in cursor.fetchall():
                     suspicious_summary.append({
                         "email": email,
                         "action": "share",
@@ -229,9 +303,8 @@ async def get_suspicious_activity(authorization: str = Header(...)):
                         "last_seen": last_seen.isoformat(),
                         "is_locked": user_id in locked_users
                     })
-                
-                #Suspicious - Failed Logins
-                cursor.execute("""
+
+                cursor.execute(f"""
                     SELECT DISTINCT u.id, u.email
                     FROM user_activity_log a1
                     JOIN user_activity_log a2 ON a1.user_id = a2.user_id
@@ -243,19 +316,17 @@ async def get_suspicious_activity(authorization: str = Header(...)):
                       AND a1.created_at < a2.created_at
                       AND a2.created_at < a3.created_at
                       AND a3.created_at <= a1.created_at + INTERVAL '1 minute'
-                """)
+                      {date_filter.replace('a.', 'a1.')}
+                """, params)
                 failed_logins = cursor.fetchall()
 
-                for row in failed_logins:
-                    user_id, email = row
-                    cursor.execute("""
+                for user_id, email in failed_logins:
+                    cursor.execute(f"""
                         SELECT COUNT(*), MIN(created_at), MAX(created_at)
                         FROM user_activity_log
-                        WHERE user_id = %s AND action = 'failed_login'
-                    """, (user_id,))
-                    count_row = cursor.fetchone()
-                    count, first_seen, last_seen = count_row
-
+                        WHERE user_id = %s AND action = 'failed_login' {date_filter.replace('a.', '')}
+                    """, [user_id] + params)
+                    count, first_seen, last_seen = cursor.fetchone()
                     suspicious_summary.append({
                         "email": email,
                         "action": "failed_login",
@@ -265,14 +336,22 @@ async def get_suspicious_activity(authorization: str = Header(...)):
                         "is_locked": user_id in locked_users
                     })
 
+        start = (page - 1) * limit
+        end = start + limit
+        paginated_summary = suspicious_summary[start:end]
+
         return {
             "blocked_users": blocked_users,
             "message": "Suspicious activity detected.",
-            "suspicious_summary": suspicious_summary
+            "total": len(suspicious_summary),
+            "page": page,
+            "limit": limit,
+            "suspicious_summary": paginated_summary
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
     
 
 @router.get("/user-activity")
