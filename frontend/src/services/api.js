@@ -66,10 +66,13 @@ export const previewFile = async (fileName) => {
     return res.data;
 };
 
-export const getAllUsers = async () => {
-    const res = await api.get("/admin/users");
-    return res.data;
+export const getAllUsers = async (page = 1, limit = 10) => {
+  const res = await api.get("/admin/users", {
+    params: { page, limit },
+  });
+  return res.data;
 };
+
 
 export const getUserFilesById = async (userId) => {
     const res = await api.get("/admin/user-files", {
@@ -90,29 +93,34 @@ export const getAdminStats = async () => {
   return res.data;
 };
 
-export const getActivityLog = async () => {
-  const res = await api.get("/admin/activity-log");
+export const getActivityLog = async (page = 1, limit = 10) => {
+  const res = await api.get("/admin/activity-log", {
+    params: { page, limit },
+  });
   return res.data;
 };
+
 
 export const getSuspiciousActivity = async () => {
   const res = await api.get("/admin/suspicious-activity");
   return res.data;
 };
 
-export const getUserActivity = async (email) => {
+export const getUserActivity = async (email, page = 1, limit = 10) => {
   const res = await api.get("/admin/user-activity", {
-    params: { email },
+    params: { email, page, limit },
   });
   return res.data;
 };
 
-export const searchUsers = async (query) => {
+
+export const searchUsers = async (query, page = 1, limit = 10) => {
   const res = await api.get("/admin/search-users", {
-    params: { query },
+    params: { query, page, limit },
   });
   return res.data;
 };
+
 
 export const filterActivity = async (action_type, date) => {
   const res = await api.get("/admin/filter-activity", {

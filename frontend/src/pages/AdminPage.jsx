@@ -35,12 +35,24 @@ export default function AdminPanel() {
   const [users, setUsers] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   
-  // New state for filters and search
   const [searchQuery, setSearchQuery] = useState("");
   const [actionFilter, setActionFilter] = useState("all");
   const [dateFilter, setDateFilter] = useState("");
   const [selectedUser, setSelectedUser] = useState(null);
   const [userActivityData, setUserActivityData] = useState([]);
+  const [userActivityPage, setUserActivityPage] = useState(1);
+  const [userActivityTotal, setUserActivityTotal] = useState(0);
+  const userActivityLimit = 10;
+  const [searchPage, setSearchPage] = useState(1);
+  const [searchTotal, setSearchTotal] = useState(0);
+  const searchLimit = 10;
+  const [userPage, setUserPage] = useState(1);
+  const [userTotal, setUserTotal] = useState(0);
+  const userLimit = 10;
+
+  
+
+
 
   const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884d8", "#82ca9d"];
 
@@ -50,9 +62,9 @@ export default function AdminPanel() {
       try {
         await Promise.all([
           fetchStats(),
-          fetchActivity(),
+          fetchActivity(1),
           fetchSuspicious(),
-          fetchUsers()
+          fetchUsers(1)
         ]);
       } catch (err) {
         console.error("Error fetching data:", err);
@@ -75,16 +87,21 @@ export default function AdminPanel() {
     }
   };
 
-  const fetchActivity = async () => {
+  const [activityPage, setActivityPage] = useState(1);
+  const [activityTotal, setActivityTotal] = useState(0);
+  const activityLimit = 10;
+  
+  const fetchActivity = async (page = 1) => {
     try {
-      const res = await getActivityLog();
+      const res = await getActivityLog(page, activityLimit);
       setActivityLogs(res.logs);
-      return res.logs;
+      setActivityTotal(res.total);
+      setActivityPage(page);
     } catch (err) {
       console.error("Failed to load activity log", err);
-      return [];
     }
   };
+  
 
   const fetchSuspicious = async () => {
     try {
@@ -97,31 +114,35 @@ export default function AdminPanel() {
     }
   };
 
-  const fetchUsers = async () => {
+  const fetchUsers = async (page = 1) => {
     try {
-      const res = await getAllUsers();
+      const res = await getAllUsers(page, userLimit);
       setUsers(res.users);
-      return res.users;
+      setUserPage(page);
+      setUserTotal(res.total); // Make sure this line is executing with the correct value
+      console.log("User total:", res.total); // Add this to debug
     } catch (err) {
       console.error("Failed to load users", err);
-      return [];
     }
   };
+  
 
-  // New functions to handle API interactions
-  const handleSearchUsers = async () => {
+  const handleSearchUsers = async (page = 1) => {
     if (!searchQuery.trim()) {
       fetchUsers();
       return;
     }
-    
+  
     try {
-      const res = await searchUsers(searchQuery);
+      const res = await searchUsers(searchQuery, page, searchLimit);
       setUsers(res.users);
+      setSearchPage(page);
+      setSearchTotal(res.total);
     } catch (err) {
       console.error("Failed to search users", err);
     }
   };
+  
 
   const handleFilterActivity = async () => {
     try {
@@ -140,7 +161,7 @@ export default function AdminPanel() {
       await lockUser(email);
       await fetchUsers();
       await fetchSuspicious();
-      await fetchStats(); // 🧠 Refresh stats after locking too
+      await fetchStats(); 
       alert(`User ${email} has been locked`);
     } catch (err) {
       console.error("Failed to lock user", err);
@@ -167,12 +188,14 @@ export default function AdminPanel() {
     }
   };
 
-  const viewUserActivity = async (email) => {
+  const viewUserActivity = async (email, page = 1) => {
     try {
       setIsLoading(true);
-      const res = await getUserActivity(email);
+      const res = await getUserActivity(email, page, userActivityLimit);
       setSelectedUser(email);
       setUserActivityData(res.logs);
+      setUserActivityPage(page);
+      setUserActivityTotal(res.total);
       setView("userDetail");
     } catch (err) {
       console.error("Failed to get user activity", err);
@@ -180,6 +203,7 @@ export default function AdminPanel() {
       setIsLoading(false);
     }
   };
+  
 
   const handleLogout = () => {
     localStorage.clear();
@@ -219,20 +243,16 @@ export default function AdminPanel() {
     ];
   };
 
-  // Prepare activity data for timeline chart
   const prepareActivityData = () => {
     if (!activityLogs || activityLogs.length === 0) return [];
     
-    // Group activities by day and count them
     const grouped = activityLogs.reduce((acc, log) => {
-      // Extract date part only
       const date = log.timestamp.split('T')[0];
       if (!acc[date]) acc[date] = 0;
       acc[date]++;
       return acc;
     }, {});
     
-    // Convert to array for chart
     return Object.entries(grouped)
       .map(([date, count]) => ({
         date,
@@ -359,82 +379,128 @@ export default function AdminPanel() {
               </div>
             )}
 
-            {view === "users" && (
-              <div>
-                <h2>👥 User Management</h2>
-                <div className="search-filter-container">
-                  <input 
-                    type="text" 
-                    className="search-input" 
-                    placeholder="Search users..." 
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSearchUsers()}
-                  />
+{view === "users" && (
+  <div>
+    <h2>👥 User Management</h2>
+
+    {/* Search + Reset */}
+    <div className="search-filter-container">
+      <input 
+        type="text" 
+        className="search-input" 
+        placeholder="Search users..." 
+        value={searchQuery}
+        onChange={(e) => setSearchQuery(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && handleSearchUsers(1)}
+      />
+      <button 
+        className="search-button"
+        onClick={() => handleSearchUsers(1)}
+      >
+        Search
+      </button>
+      <button 
+        className="reset-button"
+        onClick={() => {
+          setSearchQuery('');
+          setSearchPage(1);
+          fetchUsers(1);
+        }}
+      >
+        Reset
+      </button>
+    </div>
+
+    <div className="users-table-container">
+      <table className="users-table">
+        <thead>
+          <tr>
+            <th>Email</th>
+            <th>Uploads</th>
+            <th>Shares</th>
+            <th>Last Active</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {users.map((user, index) => {
+            const uploadCount = stats?.uploads_per_user.find(([email]) => email === user.email)?.[1] || 0;
+            const shareCount = stats?.shares_per_user.find(([email]) => email === user.email)?.[1] || 0;
+            const userActivities = activityLogs.filter(log => log.email === user.email);
+            const lastActive = userActivities.length > 0 
+              ? new Date(userActivities[0].timestamp).toLocaleDateString()
+              : 'Never';
+
+            return (
+              <tr key={user.id || index}>
+                <td>{user.email}</td>
+                <td>{uploadCount}</td>
+                <td>{shareCount}</td>
+                <td>{lastActive}</td>
+                <td>
                   <button 
-                    className="search-button"
-                    onClick={handleSearchUsers}
+                    className="action-button view-button"
+                    onClick={() => viewUserActivity(user.email)}
                   >
-                    Search
+                    View
                   </button>
-                  <button 
-                    className="reset-button"
-                    onClick={() => {
-                      setSearchQuery('');
-                      fetchUsers();
-                    }}
-                  >
-                    Reset
-                  </button>
-                </div>
-                
-                <div className="users-table-container">
-                  <table className="users-table">
-                    <thead>
-                      <tr>
-                        <th>Email</th>
-                        <th>Uploads</th>
-                        <th>Shares</th>
-                        <th>Last Active</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {users.map((user, index) => {
-                        const uploadCount = stats?.uploads_per_user.find(([email]) => email === user.email)?.[1] || 0;
-                        const shareCount = stats?.shares_per_user.find(([email]) => email === user.email)?.[1] || 0;
-                        
-                        const userActivities = activityLogs.filter(log => log.email === user.email);
-                        const lastActive = userActivities.length > 0 
-                          ? new Date(userActivities[0].timestamp).toLocaleDateString()
-                          : 'Never';
-                        
-                        return (
-                          <tr key={user.id || index}>
-                            <td>{user.email}</td>
-                            <td>{uploadCount}</td>
-                            <td>{shareCount}</td>
-                            <td>{lastActive}</td>
-                            <td>
-                              <button 
-                                className="action-button view-button"
-                                onClick={() => viewUserActivity(user.email)}
-                              >
-                                View
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+
+      {searchQuery && (
+        <div className="pagination-controls">
+          <button
+            disabled={searchPage <= 1}
+            onClick={() => handleSearchUsers(searchPage - 1)}
+          >
+            ← Prev
+          </button>
+          <span>
+            Page {searchPage} of {Math.max(1, Math.ceil(searchTotal / searchLimit))}
+          </span>
+          <button
+            disabled={searchPage >= Math.ceil(searchTotal / searchLimit) || searchTotal <= searchLimit}
+            onClick={() => handleSearchUsers(searchPage + 1)}
+          >
+            Next →
+          </button>
+        </div>
+      )}
+
+      {!searchQuery && (
+        <div className="pagination-controls">
+          <button
+            disabled={userPage <= 1}
+            onClick={() => fetchUsers(userPage - 1)}
+          >
+            ← Prev
+          </button>
+          <span>
+            Page {userPage} of {Math.max(1, Math.ceil(userTotal / userLimit))}
+          </span>
+          <button
+            disabled={userPage >= Math.ceil(userTotal / userLimit) || userTotal <= userLimit}
+            onClick={() => fetchUsers(userPage + 1)}
+          >
+            Next →
+          </button>
+        </div>
+
+      )}
+          </div>
+        </div>
+      )}
+
+
 
             {view === "logs" && (
               <div>
                 <h2>📋 Activity Log</h2>
+                
                 <div className="log-filters">
                   <select 
                     className="log-filter"
@@ -471,7 +537,8 @@ export default function AdminPanel() {
                     Reset
                   </button>
                 </div>
-                
+
+                {/* Log Table */}
                 <div className="activity-logs-container">
                   <table className="activity-table">
                     <thead>
@@ -494,8 +561,25 @@ export default function AdminPanel() {
                     </tbody>
                   </table>
                 </div>
+
+                <div className="pagination-controls">
+                  <button
+                    disabled={activityPage <= 1}
+                    onClick={() => fetchActivity(activityPage - 1)}
+                  >
+                    ← Prev
+                  </button>
+                  <span>Page {activityPage} of {Math.ceil(activityTotal / activityLimit)}</span>
+                  <button
+                    disabled={activityPage >= Math.ceil(activityTotal / activityLimit)}
+                    onClick={() => fetchActivity(activityPage + 1)}
+                  >
+                    Next →
+                  </button>
+                </div>
               </div>
             )}
+
 
             {view === "suspicious" && suspicious && (
               <div>
@@ -585,34 +669,51 @@ export default function AdminPanel() {
             {view === "userDetail" && selectedUser && (
               <div>
                 <h2>👤 User Activity: {selectedUser}</h2>
-                <button 
-                  className="back-button" 
-                  onClick={() => setView("users")}
-                >
+                <button className="back-button" onClick={() => setView("users")}>
                   ← Back to Users
                 </button>
-                
+
                 <div className="user-activity-container">
                   <h3>Activity History</h3>
                   {userActivityData.length > 0 ? (
-                    <table className="activity-table">
-                      <thead>
-                        <tr>
-                          <th>Action</th>
-                          <th>Details</th>
-                          <th>Timestamp</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {userActivityData.map((log, idx) => (
-                          <tr key={idx} className={`activity-${log.action.toLowerCase()}`}>
-                            <td>{log.action}</td>
-                            <td>{log.metadata}</td>
-                            <td>{new Date(log.timestamp).toLocaleString()}</td>
+                    <>
+                      <table className="activity-table">
+                        <thead>
+                          <tr>
+                            <th>Action</th>
+                            <th>Details</th>
+                            <th>Timestamp</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {userActivityData.map((log, idx) => (
+                            <tr key={idx} className={`activity-${log.action.toLowerCase()}`}>
+                              <td>{log.action}</td>
+                              <td>{log.metadata}</td>
+                              <td>{new Date(log.timestamp).toLocaleString()}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+
+                      <div className="pagination-controls">
+                        <button
+                          disabled={userActivityPage <= 1}
+                          onClick={() => viewUserActivity(selectedUser, userActivityPage - 1)}
+                        >
+                          ← Prev
+                        </button>
+                        <span>
+                          Page {userActivityPage} of {Math.ceil(userActivityTotal / userActivityLimit)}
+                        </span>
+                        <button
+                          disabled={userActivityPage >= Math.ceil(userActivityTotal / userActivityLimit)}
+                          onClick={() => viewUserActivity(selectedUser, userActivityPage + 1)}
+                        >
+                          Next →
+                        </button>
+                      </div>
+                    </>
                   ) : (
                     <div className="no-data-message">
                       <p>No activity found for this user</p>
@@ -621,6 +722,7 @@ export default function AdminPanel() {
                 </div>
               </div>
             )}
+
           </>
         )}
       </main>
