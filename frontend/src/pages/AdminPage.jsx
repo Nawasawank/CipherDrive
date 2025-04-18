@@ -263,16 +263,13 @@ export default function AdminPanel() {
     localStorage.clear();
     window.location.href = "/";
   };
-
-  // Format data for charts
   const prepareUploadsData = () => {
     if (!stats || !stats.uploads_per_user) return [];
     
-    // Only show top 5 users for chart clarity
     return stats.uploads_per_user
-      .slice(0, 5) // Take top 5 users
+      .slice(0, 5) 
       .map(([email, count]) => ({
-        name: email.split('@')[0], // Just show username part for chart
+        name: email.split('@')[0], 
         uploads: count
       }));
   };
@@ -280,7 +277,6 @@ export default function AdminPanel() {
   const prepareSharesData = () => {
     if (!stats || !stats.shares_per_user) return [];
     
-    // Only show top 5 users for chart clarity
     return stats.shares_per_user
       .slice(0, 5)
       .map(([email, count]) => ({
