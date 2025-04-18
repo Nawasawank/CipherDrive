@@ -87,14 +87,14 @@ def login(data: LoginRequest):
                     )
 
                     cursor.execute("""
-                        SELECT action FROM user_activity_log
-                        WHERE user_id = %s
-                        ORDER BY created_at DESC
-                        LIMIT 3
+                        SELECT COUNT(*) FROM user_activity_log
+                        WHERE user_id = %s 
+                          AND action = 'failed_login'
+                          AND created_at >= NOW() - INTERVAL '1 minute'
                     """, (db_id,))
-                    recent_actions = [row[0] for row in cursor.fetchall()]
+                    failed_count = cursor.fetchone()[0]
 
-                    if recent_actions.count('failed_login') == 3:
+                    if failed_count >= 3:
                         cursor.execute("UPDATE users SET is_locked = TRUE WHERE id = %s", (db_id,))
 
                     conn.commit()
@@ -105,7 +105,6 @@ def login(data: LoginRequest):
                     (db_id, 'login', data.email)
                 )
                 conn.commit()
-
         token = create_access_token({
             "user_id": db_id,
             "role": db_role
