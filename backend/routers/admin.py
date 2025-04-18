@@ -59,7 +59,11 @@ async def get_admin_stats(authorization: str = Header(...)):
 
 
 @router.get("/users")
-async def get_all_users(authorization: str = Header(...)):
+async def get_all_users(
+    authorization: str = Header(...),
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=100)
+):
     try:
         token = authorization.split(" ")[1]
         decoded_token = verify_token(token)
@@ -67,13 +71,27 @@ async def get_all_users(authorization: str = Header(...)):
         if not decoded_token or decoded_token.get("role") != "admin":
             raise HTTPException(status_code=403, detail="Admins only")
 
+        offset = (page - 1) * limit
+
         with get_db() as conn:
             with conn.cursor() as cursor:
-                cursor.execute("SELECT id, email FROM users WHERE role = 'user' ORDER BY email")
+                cursor.execute("SELECT COUNT(*) FROM users WHERE role = 'user'")
+                total_users = cursor.fetchone()[0]
+
+                cursor.execute("""
+                    SELECT id, email
+                    FROM users
+                    WHERE role = 'user'
+                    ORDER BY email
+                    LIMIT %s OFFSET %s
+                """, (limit, offset))
                 users = cursor.fetchall()
 
         return {
             "message": "Users retrieved successfully",
+            "page": page,
+            "limit": limit,
+            "total": total_users,
             "users": [{"id": u[0], "email": u[1]} for u in users]
         }
 
@@ -81,22 +99,34 @@ async def get_all_users(authorization: str = Header(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
 @router.get("/activity-log")
-async def get_activity_log(authorization: str = Header(...)):
+async def get_activity_log(
+    authorization: str = Header(...),
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=100)
+):
     try:
         token = authorization.split(" ")[1]
         decoded_token = verify_token(token)
         if not decoded_token or decoded_token.get("role") != "admin":
             raise HTTPException(status_code=403, detail="Admins only")
 
+        offset = (page - 1) * limit
+
         with get_db() as conn:
             with conn.cursor() as cursor:
+                # Get total count for pagination
+                cursor.execute("SELECT COUNT(*) FROM user_activity_log")
+                total_logs = cursor.fetchone()[0]
+
                 cursor.execute("""
                     SELECT u.email, a.action, a.metadata, a.created_at
                     FROM user_activity_log a
                     LEFT JOIN users u ON a.user_id = u.id
                     ORDER BY a.created_at DESC
-                """)
+                    LIMIT %s OFFSET %s
+                """, (limit, offset))
                 logs = cursor.fetchall()
 
                 enriched_logs = []
@@ -130,6 +160,9 @@ async def get_activity_log(authorization: str = Header(...)):
 
         return {
             "message": "Recent activity log",
+            "page": page,
+            "limit": limit,
+            "total": total_logs,
             "logs": enriched_logs
         }
 
@@ -150,71 +183,86 @@ async def get_suspicious_activity(authorization: str = Header(...)):
 
         with get_db() as conn:
             with conn.cursor() as cursor:
+                cursor.execute("SELECT id, email FROM users WHERE is_locked = TRUE")
+                locked_result = cursor.fetchall()
+                locked_users = {row[0]: row[1] for row in locked_result}
+                blocked_users = list(locked_users.values())
 
+                #Suspicious - Fast Uploaders
                 cursor.execute("""
-                    SELECT u.id, u.email, COUNT(*) as upload_count, MIN(a.created_at), MAX(a.created_at)
+                    SELECT u.id, u.email, COUNT(*) AS count, MIN(a.created_at), MAX(a.created_at)
                     FROM user_activity_log a
-                    JOIN users u ON a.user_id = u.id
+                    JOIN users u ON u.id = a.user_id
                     WHERE a.action = 'upload' AND a.created_at > NOW() - INTERVAL '1 minute'
                     GROUP BY u.id, u.email
                     HAVING COUNT(*) > 100
                 """)
-                fast_uploaders = cursor.fetchall()
-
-                for u in fast_uploaders:
-                    cursor.execute("SELECT is_locked FROM users WHERE id = %s", (u[0],))
-                    if cursor.fetchone()[0]:
-                        blocked_users.append(u[1])
+                uploads = cursor.fetchall()
+                for row in uploads:
+                    user_id, email, count, first_seen, last_seen = row
                     suspicious_summary.append({
-                        "email": u[1],
+                        "email": email,
                         "action": "upload",
-                        "count": u[2],
-                        "first_seen": u[3].isoformat(),
-                        "last_seen": u[4].isoformat()
+                        "count": count,
+                        "first_seen": first_seen.isoformat(),
+                        "last_seen": last_seen.isoformat(),
+                        "is_locked": user_id in locked_users
                     })
-
+                
+                #Suspicious - Over-Sharers
                 cursor.execute("""
-                    SELECT u.id, u.email, COUNT(DISTINCT a.metadata) as unique_shares, MIN(a.created_at), MAX(a.created_at)
+                    SELECT u.id, u.email, COUNT(DISTINCT a.metadata) AS count, MIN(a.created_at), MAX(a.created_at)
                     FROM user_activity_log a
-                    JOIN users u ON a.user_id = u.id
+                    JOIN users u ON u.id = a.user_id
                     WHERE a.action = 'share'
                     GROUP BY u.id, u.email
                     HAVING COUNT(DISTINCT a.metadata) > 50
                 """)
-                oversharers = cursor.fetchall()
-
-                for u in oversharers:
-                    cursor.execute("SELECT is_locked FROM users WHERE id = %s", (u[0],))
-                    if cursor.fetchone()[0]:
-                        blocked_users.append(u[1])
+                shares = cursor.fetchall()
+                for row in shares:
+                    user_id, email, count, first_seen, last_seen = row
                     suspicious_summary.append({
-                        "email": u[1],
+                        "email": email,
                         "action": "share",
-                        "count": u[2],
-                        "first_seen": u[3].isoformat(),
-                        "last_seen": u[4].isoformat()
+                        "count": count,
+                        "first_seen": first_seen.isoformat(),
+                        "last_seen": last_seen.isoformat(),
+                        "is_locked": user_id in locked_users
                     })
-
+                
+                #Suspicious - Failed Logins
                 cursor.execute("""
-                    SELECT u.id, u.email, COUNT(*) as failed_logins, MIN(a.created_at), MAX(a.created_at)
-                    FROM user_activity_log a
-                    JOIN users u ON a.user_id = u.id
-                    WHERE a.action = 'failed_login' AND a.created_at > NOW() - INTERVAL '1 hour'
-                    GROUP BY u.id, u.email
-                    HAVING COUNT(*) > 3
+                    SELECT DISTINCT u.id, u.email
+                    FROM user_activity_log a1
+                    JOIN user_activity_log a2 ON a1.user_id = a2.user_id
+                    JOIN user_activity_log a3 ON a1.user_id = a3.user_id
+                    JOIN users u ON u.id = a1.user_id
+                    WHERE a1.action = 'failed_login'
+                      AND a2.action = 'failed_login'
+                      AND a3.action = 'failed_login'
+                      AND a1.created_at < a2.created_at
+                      AND a2.created_at < a3.created_at
+                      AND a3.created_at <= a1.created_at + INTERVAL '1 minute'
                 """)
                 failed_logins = cursor.fetchall()
 
-                for u in failed_logins:
-                    cursor.execute("SELECT is_locked FROM users WHERE id = %s", (u[0],))
-                    if cursor.fetchone()[0]:
-                        blocked_users.append(u[1])
+                for row in failed_logins:
+                    user_id, email = row
+                    cursor.execute("""
+                        SELECT COUNT(*), MIN(created_at), MAX(created_at)
+                        FROM user_activity_log
+                        WHERE user_id = %s AND action = 'failed_login'
+                    """, (user_id,))
+                    count_row = cursor.fetchone()
+                    count, first_seen, last_seen = count_row
+
                     suspicious_summary.append({
-                        "email": u[1],
+                        "email": email,
                         "action": "failed_login",
-                        "count": u[2],
-                        "first_seen": u[3].isoformat(),
-                        "last_seen": u[4].isoformat()
+                        "count": count,
+                        "first_seen": first_seen.isoformat() if first_seen else None,
+                        "last_seen": last_seen.isoformat() if last_seen else None,
+                        "is_locked": user_id in locked_users
                     })
 
         return {
@@ -225,12 +273,13 @@ async def get_suspicious_activity(authorization: str = Header(...)):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
     
 
 @router.get("/user-activity")
 async def get_user_activity(
     email: str,
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=100),
     authorization: str = Header(...)
 ):
     try:
@@ -239,34 +288,53 @@ async def get_user_activity(
         if not decoded_token or decoded_token.get("role") != "admin":
             raise HTTPException(status_code=403, detail="Admins only")
 
+        offset = (page - 1) * limit
+
         with get_db() as conn:
             with conn.cursor() as cursor:
+                # Get total count
                 cursor.execute("""
-                    SELECT u.email, a.action, a.metadata, a.created_at
+                    SELECT COUNT(*)
+                    FROM user_activity_log a
+                    JOIN users u ON a.user_id = u.id
+                    WHERE u.email = %s
+                """, (email,))
+                total_logs = cursor.fetchone()[0]
+
+                # Fetch paginated logs
+                cursor.execute("""
+                    SELECT a.action, a.metadata, a.created_at
                     FROM user_activity_log a
                     JOIN users u ON a.user_id = u.id
                     WHERE u.email = %s
                     ORDER BY a.created_at DESC
-                """, (email,))
+                    LIMIT %s OFFSET %s
+                """, (email, limit, offset))
                 logs = cursor.fetchall()
 
         return {
             "email": email,
+            "page": page,
+            "limit": limit,
+            "total": total_logs,
             "logs": [
                 {
-                    "action": row[1],
-                    "metadata": row[2],
-                    "timestamp": row[3].isoformat()
+                    "action": row[0],
+                    "metadata": row[1],
+                    "timestamp": row[2].isoformat()
                 } for row in logs
             ]
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
     
 @router.get("/search-users")
 async def search_users(
     query: str = Query(...),
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=100),
     authorization: str = Header(...)
 ):
     try:
@@ -275,21 +343,34 @@ async def search_users(
         if not decoded_token or decoded_token.get("role") != "admin":
             raise HTTPException(status_code=403, detail="Admins only")
 
+        offset = (page - 1) * limit
+
         with get_db() as conn:
             with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT COUNT(*) FROM users
+                    WHERE role = 'user' AND email ILIKE %s
+                """, (f"%{query}%",))
+                total_users = cursor.fetchone()[0]
+
                 cursor.execute("""
                     SELECT id, email FROM users
                     WHERE role = 'user' AND email ILIKE %s
                     ORDER BY email
-                """, (f"%{query}%",))
+                    LIMIT %s OFFSET %s
+                """, (f"%{query}%", limit, offset))
                 results = cursor.fetchall()
 
         return {
+            "page": page,
+            "limit": limit,
+            "total": total_users,
             "users": [{"id": r[0], "email": r[1]} for r in results]
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.get("/filter-activity")
 async def filter_activity(
