@@ -62,7 +62,7 @@ def login(data: LoginRequest):
                 """, (data.email,))
                 user = cursor.fetchone()
 
-                if not user:
+                if user is None:
                     cursor.execute(
                         "INSERT INTO user_activity_log (user_id, action, metadata) VALUES (%s, %s, %s)",
                         (None, 'failed_login', data.email)
@@ -75,11 +75,28 @@ def login(data: LoginRequest):
                 if is_locked:
                     raise HTTPException(status_code=403, detail="Your account is locked")
 
-                if not bcrypt.checkpw(data.password.encode(), db_hashed_password.encode()):
+                try:
+                    password_matches = bcrypt.checkpw(data.password.encode(), db_hashed_password.encode())
+                except Exception:
+                    raise HTTPException(status_code=401, detail="Invalid credentials")
+
+                if not password_matches:
                     cursor.execute(
                         "INSERT INTO user_activity_log (user_id, action, metadata) VALUES (%s, %s, %s)",
                         (db_id, 'failed_login', data.email)
                     )
+
+                    cursor.execute("""
+                        SELECT action FROM user_activity_log
+                        WHERE user_id = %s
+                        ORDER BY created_at DESC
+                        LIMIT 3
+                    """, (db_id,))
+                    recent_actions = [row[0] for row in cursor.fetchall()]
+
+                    if recent_actions.count('failed_login') == 3:
+                        cursor.execute("UPDATE users SET is_locked = TRUE WHERE id = %s", (db_id,))
+
                     conn.commit()
                     raise HTTPException(status_code=401, detail="Invalid credentials")
 
@@ -103,7 +120,8 @@ def login(data: LoginRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.get("/user-details")
 def get_user_details(authorization: str = Header(...)):

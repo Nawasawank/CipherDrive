@@ -325,7 +325,7 @@ export default function AdminPanel() {
                         <XAxis dataKey="name" />
                         <YAxis />
                         <Tooltip />
-                        <Bar dataKey="uploads" fill="#0088FE" />
+                        <Bar dataKey="uploads" fill="#0088FE" barSize={60} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -338,7 +338,7 @@ export default function AdminPanel() {
                         <XAxis dataKey="name" />
                         <YAxis />
                         <Tooltip />
-                        <Bar dataKey="shares" fill="#00C49F" />
+                        <Bar dataKey="shares" fill="#00C49F" barSize={60} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>

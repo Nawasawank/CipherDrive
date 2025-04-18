@@ -75,14 +75,24 @@ async def upload_file(file: UploadFile, authorization: str = Header(...)):
                 "encrypted_aes_key": str(encrypted_aes_key)
             }).execute()
         )
-
-        # Log upload
+        
         with get_db() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
                     "INSERT INTO user_activity_log (user_id, action, metadata) VALUES (%s, %s, %s)",
                     (user_id, 'upload', file_name)
                 )
+
+                # Check for abuse (more than 100 uploads in the last minute)
+                cursor.execute("""
+                    SELECT COUNT(*) FROM user_activity_log
+                    WHERE user_id = %s AND action = 'upload' AND created_at > NOW() - INTERVAL '1 minute'
+                """, (user_id,))
+                upload_count = cursor.fetchone()[0]
+
+                if upload_count > 100:
+                    cursor.execute("UPDATE users SET is_locked = TRUE WHERE id = %s", (user_id,))
+
                 conn.commit()
 
         cipher = AES.new(aes_key, AES.MODE_EAX, nonce=nonce)

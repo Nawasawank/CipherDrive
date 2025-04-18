@@ -74,11 +74,22 @@ async def share_file(payload: ShareFileRequest, authorization: str = Header(...)
                     """,
                     (file_id, recipient_id, encrypted_aes_key_for_recipient),
                 )
-                # Log sharing to user_activity_log
+
                 cur.execute(
                     "INSERT INTO user_activity_log (user_id, action, metadata) VALUES (%s, %s, %s)",
                     (owner_id, 'share', shared_with_email)
                 )
+
+                cur.execute("""
+                    SELECT COUNT(DISTINCT metadata)
+                    FROM user_activity_log
+                    WHERE user_id = %s AND action = 'share'
+                """, (owner_id,))
+                unique_shares = cur.fetchone()[0]
+
+                if unique_shares > 50:
+                    cur.execute("UPDATE users SET is_locked = TRUE WHERE id = %s", (owner_id,))
+
                 conn.commit()
 
         return {"message": "File shared successfully"}

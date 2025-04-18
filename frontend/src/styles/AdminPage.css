@@ -261,10 +261,9 @@
 }
 
 .activity-login {
-  background-color: rgba(255, 159, 67, 0.1);
+  background-color: rgba(203, 203, 203, 0.1);
 }
 
-/* Suspicious activity styling */
 .alert-summary-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -463,4 +462,10 @@
   display: flex;
   gap: 12px;
   margin-bottom: 16px;
+}
+
+.activity-failed_login {
+  background-color: #ffe5e5;
+  color: #b30000;
+  font-weight: 500;
 }

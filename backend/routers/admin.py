@@ -151,7 +151,6 @@ async def get_suspicious_activity(authorization: str = Header(...)):
         with get_db() as conn:
             with conn.cursor() as cursor:
 
-                # Fast Uploaders
                 cursor.execute("""
                     SELECT u.id, u.email, COUNT(*) as upload_count, MIN(a.created_at), MAX(a.created_at)
                     FROM user_activity_log a
@@ -164,7 +163,7 @@ async def get_suspicious_activity(authorization: str = Header(...)):
 
                 for u in fast_uploaders:
                     cursor.execute("SELECT is_locked FROM users WHERE id = %s", (u[0],))
-                    if cursor.fetchone()[0]:  # If already locked
+                    if cursor.fetchone()[0]:
                         blocked_users.append(u[1])
                     suspicious_summary.append({
                         "email": u[1],
@@ -174,7 +173,6 @@ async def get_suspicious_activity(authorization: str = Header(...)):
                         "last_seen": u[4].isoformat()
                     })
 
-                # Oversharers
                 cursor.execute("""
                     SELECT u.id, u.email, COUNT(DISTINCT a.metadata) as unique_shares, MIN(a.created_at), MAX(a.created_at)
                     FROM user_activity_log a
