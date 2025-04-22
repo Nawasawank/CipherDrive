@@ -75,7 +75,7 @@ async def upload_file(file: UploadFile, authorization: str = Header(...)):
                 "encrypted_aes_key": str(encrypted_aes_key)
             }).execute()
         )
-        
+
         with get_db() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
@@ -83,7 +83,6 @@ async def upload_file(file: UploadFile, authorization: str = Header(...)):
                     (user_id, 'upload', file_name)
                 )
 
-                # Check for abuse (more than 100 uploads in the last minute)
                 cursor.execute("""
                     SELECT COUNT(*) FROM user_activity_log
                     WHERE user_id = %s AND action = 'upload' AND created_at > NOW() - INTERVAL '1 minute'
@@ -92,6 +91,11 @@ async def upload_file(file: UploadFile, authorization: str = Header(...)):
 
                 if upload_count > 100:
                     cursor.execute("UPDATE users SET is_locked = TRUE WHERE id = %s", (user_id,))
+                    conn.commit()
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Your account is locked due to excessive uploads (more than 100 in 1 minute)."
+                    )
 
                 conn.commit()
 
@@ -114,6 +118,7 @@ async def upload_file(file: UploadFile, authorization: str = Header(...)):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 process_pool = concurrent.futures.ProcessPoolExecutor()

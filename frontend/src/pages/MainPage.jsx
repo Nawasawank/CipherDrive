@@ -10,6 +10,8 @@ import {
 import * as pdfjsLib from "pdfjs-dist";
 import BottomRightToast from "../components/BottomRightToast";
 import "../styles/MainPage.css";
+import ErrorOverlay from "../components/UploadErrorOverlay"; 
+
 
 export default function MainPage() {
   const [files, setFiles] = useState([]);
@@ -24,6 +26,11 @@ export default function MainPage() {
   const [shareEmail, setShareEmail] = useState("");
   const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
+  const [showErrorOverlay, setShowErrorOverlay] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [errorTitle, setErrorTitle] = useState(""); 
+
+  
 
   const currentFetchId = useRef(0);
   const MAX_PREVIEW_SIZE = 5 * 1024 * 1024; 
@@ -170,8 +177,18 @@ export default function MainPage() {
         setShowSuccessOverlay(true);
       } catch (err) {
         console.error("Upload failed:", err);
-        alert("Upload failed. Please try again.");
-      } finally {
+        const message = err?.response?.data?.detail || "Upload failed. Please try again.";
+        setErrorTitle("Failed to Upload");
+        setErrorMessage(message);
+        setShowErrorOverlay(true);
+      
+        if (message.toLowerCase().includes("locked")) {
+          setTimeout(() => {
+            handleLogout();
+          }, 3000);
+        }
+      }
+       finally {
         setIsUploading(false);
       }
     }
@@ -191,7 +208,16 @@ export default function MainPage() {
       setShareModalOpen(false);
     } catch (err) {
       console.error("Share failed", err);
-      alert("Failed to share the file.");
+      const message = err?.response?.data?.detail || "Failed to share the file.";
+      setErrorTitle("Failed to Share");
+      setErrorMessage(message);
+      setShowErrorOverlay(true);
+    
+      if (message.toLowerCase().includes("locked")) {
+        setTimeout(() => {
+          handleLogout();
+        }, 3000);
+      }
     }
   };
 
@@ -354,6 +380,13 @@ export default function MainPage() {
             </div>
           </div>
         )}
+        {showErrorOverlay && (
+          <ErrorOverlay
+            message={errorMessage}
+            onClose={() => setShowErrorOverlay(false)}
+          />
+        )}
+
       </main>
     </div>
   );
