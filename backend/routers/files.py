@@ -153,7 +153,7 @@ async def get_user_files(authorization: str = Header(...)):
 
         user_email, records = await asyncio.to_thread(get_user_info_and_records)
         if not records:
-            return { "message": "No files found", "files": [] }
+            return {"message": "No files found", "files": []}
 
         prefix = f"USER_{user_email.upper().replace('@', '_').replace('.', '_')}"
         encrypted_private_key = os.getenv(f"{prefix}_ENCRYPTED_PRIVATE_KEY")
@@ -182,9 +182,14 @@ async def get_user_files(authorization: str = Header(...)):
                 content = response.content
 
                 nonce, tag, ciphertext = content[:16], content[16:32], content[32:]
-                decrypted = await asyncio.to_thread(
-                    lambda: AES.new(aes_key, AES.MODE_EAX, nonce).decrypt_and_verify(ciphertext, tag)
-                )
+
+                try:
+                    decrypted = await asyncio.to_thread(
+                        lambda: AES.new(aes_key, AES.MODE_EAX, nonce).decrypt_and_verify(ciphertext, tag)
+                    )
+                except Exception:
+                    raise Exception(f"File '{file_name}'to have been tampered with or corrupted.")
+
                 decoded_content = (
                     decrypted.decode("utf-8", errors="ignore")
                     if file_type.startswith("text/")
@@ -196,19 +201,30 @@ async def get_user_files(authorization: str = Header(...)):
                     "decrypted_content": decoded_content
                 }
 
+        decrypted_files = []
+        corrupted_files = []
+
         async with httpx.AsyncClient(timeout=10.0) as client:
             tasks = [decrypt_file(f, client) for f in records]
-            decrypted_files = await asyncio.gather(*tasks)
+            for task in asyncio.as_completed(tasks):
+                try:
+                    result = await task
+                    decrypted_files.append(result)
+                except Exception as e:
+                    corrupted_files.append(str(e))
 
-        return {
-            "message": "Files retrieved and decrypted successfully",
+        response = {
+            "message": "Some files failed to decrypt" if corrupted_files else "Files retrieved and decrypted successfully",
             "files": decrypted_files
         }
 
+        if corrupted_files:
+            response["corrupted_files"] = corrupted_files
+
+        return response
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
 
 
 # @router.get("/admin/all-files")

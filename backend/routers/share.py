@@ -86,6 +86,7 @@ async def share_file(payload: ShareFileRequest, authorization: str = Header(...)
                     WHERE user_id = %s AND action = 'share' AND created_at > NOW() - INTERVAL '1 minute'
                 """, (owner_id,))
                 unique_shares = cur.fetchone()[0]
+                print(f"Unique shares in the last minute: {unique_shares}")
 
                 if unique_shares > 50:
                     cur.execute("UPDATE users SET is_locked = TRUE WHERE id = %s", (owner_id,))

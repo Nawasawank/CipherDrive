@@ -66,9 +66,16 @@ export default function MainPage() {
     const fetchId = ++currentFetchId.current;
     try {
       const res = mode === "my-files" ? await getUserFiles() : await getSharedFiles();
+  
       if (fetchId === currentFetchId.current) {
         const fileList = mode === "my-files" ? res.files : res.shared_files;
         setFiles(fileList);
+  
+        if (res.corrupted_files && res.corrupted_files.length > 0) {
+          setErrorTitle("Some Files Are Corrupted");
+          setErrorMessage(res.corrupted_files.join("\n"));
+          setShowErrorOverlay(true);
+        }
       }
     } catch (err) {
       console.error("Failed to load files:", err);
@@ -78,6 +85,7 @@ export default function MainPage() {
       }
     }
   };
+  
 
   const handleDelete = async (file_name) => {
     if (window.confirm(`Are you sure you want to delete "${file_name}"?`)) {
