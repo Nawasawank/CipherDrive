@@ -36,6 +36,7 @@ CipherDrive is a secure file sharing application designed to protect user data u
 ---
 
 ## 📁 Project Structure
+
 CipherDrive/
 ├── backend/ # FastAPI backend for file handling, encryption, and user logic
 ├── frontend/ # React.js frontend for user interaction
